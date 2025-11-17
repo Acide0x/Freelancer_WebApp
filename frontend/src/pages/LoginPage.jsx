@@ -78,7 +78,7 @@ const LoginPage = () => {
       // Make sure your `api` instance is set up correctly
       const response = await api.post("/users/login", formData, {
         headers: { "Content-Type": "application/json" },
-      })
+      }) // Changed endpoint to /auth/login
       const data = response.data
 
       console.log("Response Data:", data) // Log the response data to console
@@ -117,20 +117,20 @@ const LoginPage = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-cyan-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Welcome Back</h1>
-          <p className="text-gray-600">Sign in to your MartPlace account</p>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Welcome Back to SkillLink</h1>
+          <p className="text-gray-600">Sign in to your account</p>
         </div>
 
-        <Card className="border-green-200 shadow-lg">
+        <Card className="border-blue-200 shadow-lg">
           <CardHeader className="space-y-1 pb-4">
             <div className="flex items-center justify-center space-x-2 mb-4">
-              <div className="w-8 h-8 bg-green-600 rounded-lg flex items-center justify-center">
+              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
                 <LogIn className="w-5 h-5 text-white" />
               </div>
-              <span className="text-xl font-bold text-green-600">Sign In</span>
+              <span className="text-xl font-bold text-blue-600">Sign In</span>
             </div>
           </CardHeader>
 
@@ -208,7 +208,7 @@ const LoginPage = () => {
                     type="email"
                     placeholder="john@example.com"
                     value={formData.email}
-                    className={`pl-10 border-gray-300 focus:border-green-500 focus:ring-green-500 ${
+                    className={`pl-10 border-gray-300 focus:border-blue-500 focus:ring-blue-500 ${
                       fieldErrors.email ? "border-red-500" : ""
                     }`}
                     onChange={handleChange}
@@ -236,7 +236,7 @@ const LoginPage = () => {
                     type={showPassword ? "text" : "password"}
                     placeholder="Enter your password"
                     value={formData.password}
-                    className={`pl-10 pr-10 border-gray-300 focus:border-green-500 focus:ring-green-500 ${
+                    className={`pl-10 pr-10 border-gray-300 focus:border-blue-500 focus:ring-blue-500 ${
                       fieldErrors.password ? "border-red-500" : ""
                     }`}
                     onChange={handleChange}
@@ -264,15 +264,15 @@ const LoginPage = () => {
                 <button
                   type="button"
                   onClick={handleForgotPassword}
-                  className="text-sm text-green-600 hover:text-green-700 underline"
+                  className="text-sm text-blue-600 hover:text-blue-700 underline"
                 >
                   Forgot your password?
                 </button>
               </div>
 
               {/* Privacy Note */}
-              <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                <p className="text-xs text-green-800">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p className="text-xs text-blue-800">
                   🔒 Your login is secure and encrypted. We protect your privacy and never share your data.
                 </p>
               </div>
@@ -280,7 +280,7 @@ const LoginPage = () => {
               {/* Submit Button */}
               <Button
                 type="submit"
-                className="w-full bg-green-600 hover:bg-green-700 focus:ring-green-500 text-white font-medium py-2.5"
+                className="w-full bg-blue-600 hover:bg-blue-700 focus:ring-blue-500 text-white font-medium py-2.5"
                 disabled={
                   !formData.email ||
                   !formData.password ||
@@ -303,7 +303,7 @@ const LoginPage = () => {
           <CardFooter className="flex flex-col space-y-4 pt-4">
             <div className="text-center text-sm text-gray-600">
               Don't have an account?{" "}
-              <Link to="/signup" className="text-green-600 hover:text-green-700 font-medium underline">
+              <Link to="/signup" className="text-blue-600 hover:text-blue-700 font-medium underline">
                 Create account
               </Link>
             </div>
