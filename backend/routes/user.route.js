@@ -2,12 +2,17 @@
 
 const express = require("express");
 const router = express.Router();
-const userController = require("../controllers/user.controller");
+const authController = require("../controllers/user.controller"); // Updated import name
+const { signupLimiter, loginLimiter } = authController; // Import rate limiters
 
-// Signup route
-router.post("/signup", userController.signup);
+// Apply rate limiting and route handlers
+// Signup route with rate limiter
+router.post("/signup", signupLimiter, authController.signup);
 
-// Login route
-router.post("/login", userController.login);
+// Login route with rate limiter
+router.post("/login", loginLimiter, authController.login);
+
+// Logout route (optional, also public)
+router.post("/logout", authController.logout);
 
 module.exports = router;

@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
-import { Eye, EyeOff, AlertCircle, Check, Loader2, Mail, Lock, User, Phone } from "lucide-react"
+import { Eye, EyeOff, AlertCircle, Check, Loader2, Mail, Lock, User, Phone, Users } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -11,15 +11,16 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "sonner"
-import api from "@/api/api"
+import api from "@/api/api" // Assuming your API client is configured to hit the backend
 
 export default function SignupPage() {
   const [formData, setFormData] = useState({
-    username: "",
+    fullName: "", // Changed from username
     email: "",
     password: "",
-    confirmPassword: "",                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
+    confirmPassword: "",
     phone: "",
+    role: "customer", // Added role field
   })
 
   const [showPassword, setShowPassword] = useState(false)
@@ -37,10 +38,9 @@ export default function SignupPage() {
     let error = ""
 
     switch (name) {
-      case "username":
-        if (!value.trim()) error = "Username is required"
-        else if (value.length < 3) error = "Username must be at least 3 characters"
-        else if (!/^[a-zA-Z0-9_]+$/.test(value)) error = "Username can only contain letters, numbers, and underscores"
+      case "fullName":
+        if (!value.trim()) error = "Full name is required"
+        else if (value.length < 2) error = "Full name must be at least 2 characters"
         break
       case "email":
         if (!value.trim()) error = "Email is required"
@@ -49,8 +49,8 @@ export default function SignupPage() {
       case "password":
         if (!value) error = "Password is required"
         else if (value.length < 8) error = "Password must be at least 8 characters"
-        else if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(value))
-          error = "Password must contain uppercase, lowercase, and number"
+        else if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])/.test(value))
+          error = "Password must contain uppercase, lowercase, number, and special character"
         break
       case "confirmPassword":
         if (!value) error = "Please confirm your password"
@@ -80,6 +80,10 @@ export default function SignupPage() {
     }
   }
 
+  const handleRoleChange = (role) => {
+    setFormData((prev) => ({ ...prev, role }))
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError("")
@@ -91,13 +95,13 @@ export default function SignupPage() {
     }
 
     // Validate all fields
-    const isUsernameValid = validateField("username", formData.username)
+    const isFullNameValid = validateField("fullName", formData.fullName)
     const isEmailValid = validateField("email", formData.email)
     const isPasswordValid = validateField("password", formData.password)
     const isConfirmPasswordValid = validateField("confirmPassword", formData.confirmPassword, formData.password)
     const isPhoneValid = validateField("phone", formData.phone)
 
-    if (!isUsernameValid || !isEmailValid || !isPasswordValid || !isConfirmPasswordValid || !isPhoneValid) {
+    if (!isFullNameValid || !isEmailValid || !isPasswordValid || !isConfirmPasswordValid || !isPhoneValid) {
       setError("Please fix the errors below")
       return
     }
@@ -105,15 +109,12 @@ export default function SignupPage() {
     setIsLoading(true)
 
     try {
-      const response = await api.post("/users/signup", {
-        fullName: formData.username,
-        email: formData.email,
-        password: formData.password,
-        phone: formData.phone,
-      })
+      const { confirmPassword, ...signupData } = formData; // Exclude confirmPassword from the request
+
+      const response = await api.post("/users/signup", signupData) // Changed endpoint to /auth/signup
 
       setSuccess(true)
-      toast.success("Account created successfully! Please check your email to verify your account.")
+      toast.success("Account created successfully! Welcome to SkillLink.")
     } catch (err) {
       const message = err.response?.data?.message || "An error occurred. Please try again."
       setError(message)
@@ -128,16 +129,16 @@ export default function SignupPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-cyan-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Join MartPlace</h1>
-          <p className="text-gray-600">Create your account to start shopping</p>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Join SkillLink</h1>
+          <p className="text-gray-600">Find or offer specialized services</p>
         </div>
 
         {/* Success State */}
         {success ? (
-          <Card className="border-green-200 shadow-lg">
+          <Card className="border-blue-200 shadow-lg">
             <CardContent className="pt-6">
               <div className="text-center space-y-4">
                 <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
@@ -146,10 +147,9 @@ export default function SignupPage() {
                 <div>
                   <h2 className="text-xl font-semibold text-gray-900 mb-2">Account Created Successfully!</h2>
                   <p className="text-gray-600 mb-4">
-                    We've sent a verification email to your inbox. Please check your email and click the verification
-                    link to activate your account.
+                    Your account has been created. You can now log in and start using SkillLink.
                   </p>
-                  <Button onClick={() => navigate("/login")} className="bg-green-600 hover:bg-green-700">
+                  <Button onClick={() => navigate("/login")} className="bg-blue-600 hover:bg-blue-700">
                     Continue to Login
                   </Button>
                 </div>
@@ -158,13 +158,13 @@ export default function SignupPage() {
           </Card>
         ) : (
           /* Signup Form */
-          <Card className="border-green-200 shadow-lg">
+          <Card className="border-blue-200 shadow-lg">
             <CardHeader className="space-y-1 pb-4">
               <div className="flex items-center justify-center space-x-2 mb-4">
-                <div className="w-8 h-8 bg-green-600 rounded-lg flex items-center justify-center">
+                <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
                   <User className="w-5 h-5 text-white" />
                 </div>
-                <span className="text-xl font-bold text-green-600">Sign Up</span>
+                <span className="text-xl font-bold text-blue-600">Sign Up</span>
               </div>
             </CardHeader>
 
@@ -229,30 +229,30 @@ export default function SignupPage() {
               )}
 
               <form onSubmit={handleSubmit} className="space-y-4">
-                {/* Username Field */}
+                {/* Full Name Field */}
                 <div className="space-y-2">
-                  <Label htmlFor="username" className="text-sm font-medium text-gray-700">
-                    Username *
+                  <Label htmlFor="fullName" className="text-sm font-medium text-gray-700">
+                    Full Name *
                   </Label>
                   <div className="relative">
                     <User className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
                     <Input
-                      id="username"
-                      name="username"
+                      id="fullName"
+                      name="fullName"
                       type="text"
-                      placeholder="johndoe"
-                      value={formData.username}
-                      className={`pl-10 border-gray-300 focus:border-green-500 focus:ring-green-500 ${
-                        fieldErrors.username ? "border-red-500" : ""
+                      placeholder="John Doe"
+                      value={formData.fullName}
+                      className={`pl-10 border-gray-300 focus:border-blue-500 focus:ring-blue-500 ${
+                        fieldErrors.fullName ? "border-red-500" : ""
                       }`}
                       onChange={handleInputChange}
-                      aria-describedby={fieldErrors.username ? "username-error" : undefined}
+                      aria-describedby={fieldErrors.fullName ? "fullName-error" : undefined}
                       required
                     />
                   </div>
-                  {fieldErrors.username && (
-                    <p id="username-error" className="text-sm text-red-600" role="alert">
-                      {fieldErrors.username}
+                  {fieldErrors.fullName && (
+                    <p id="fullName-error" className="text-sm text-red-600" role="alert">
+                      {fieldErrors.fullName}
                     </p>
                   )}
                 </div>
@@ -270,7 +270,7 @@ export default function SignupPage() {
                       type="email"
                       placeholder="john@example.com"
                       value={formData.email}
-                      className={`pl-10 border-gray-300 focus:border-green-500 focus:ring-green-500 ${
+                      className={`pl-10 border-gray-300 focus:border-blue-500 focus:ring-blue-500 ${
                         fieldErrors.email ? "border-red-500" : ""
                       }`}
                       onChange={handleInputChange}
@@ -283,6 +283,39 @@ export default function SignupPage() {
                       {fieldErrors.email}
                     </p>
                   )}
+                </div>
+
+                {/* Role Selection */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium text-gray-700">
+                    I am a *
+                  </Label>
+                  <div className="flex space-x-4">
+                    <button
+                      type="button"
+                      className={`flex-1 flex items-center justify-center space-x-2 py-2 px-4 rounded-lg border ${
+                        formData.role === "customer"
+                          ? "border-blue-500 bg-blue-50 text-blue-700"
+                          : "border-gray-300 hover:bg-gray-50"
+                      }`}
+                      onClick={() => handleRoleChange("customer")}
+                    >
+                      <User className="h-4 w-4" />
+                      <span>Customer</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`flex-1 flex items-center justify-center space-x-2 py-2 px-4 rounded-lg border ${
+                        formData.role === "provider"
+                          ? "border-blue-500 bg-blue-50 text-blue-700"
+                          : "border-gray-300 hover:bg-gray-50"
+                      }`}
+                      onClick={() => handleRoleChange("provider")}
+                    >
+                      <Users className="h-4 w-4" />
+                      <span>Service Provider</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Password Field */}
@@ -298,7 +331,7 @@ export default function SignupPage() {
                       type={showPassword ? "text" : "password"}
                       placeholder="Create a strong password"
                       value={formData.password}
-                      className={`pl-10 pr-10 border-gray-300 focus:border-green-500 focus:ring-green-500 ${
+                      className={`pl-10 pr-10 border-gray-300 focus:border-blue-500 focus:ring-blue-500 ${
                         fieldErrors.password ? "border-red-500" : ""
                       }`}
                       onChange={handleInputChange}
@@ -320,7 +353,7 @@ export default function SignupPage() {
                     </p>
                   ) : (
                     <p id="password-help" className="text-xs text-gray-500">
-                      Must be 8+ characters with uppercase, lowercase, and number
+                      Must be 8+ chars with uppercase, lowercase, number, and special char
                     </p>
                   )}
                 </div>
@@ -338,7 +371,7 @@ export default function SignupPage() {
                       type={showConfirmPassword ? "text" : "password"}
                       placeholder="Confirm your password"
                       value={formData.confirmPassword}
-                      className={`pl-10 pr-10 border-gray-300 focus:border-green-500 focus:ring-green-500 ${
+                      className={`pl-10 pr-10 border-gray-300 focus:border-blue-500 focus:ring-blue-500 ${
                         fieldErrors.confirmPassword ? "border-red-500" : ""
                       }`}
                       onChange={handleInputChange}
@@ -374,7 +407,7 @@ export default function SignupPage() {
                       type="tel"
                       placeholder="+1 (555) 123-4567"
                       value={formData.phone}
-                      className={`pl-10 border-gray-300 focus:border-green-500 focus:ring-green-500 ${
+                      className={`pl-10 border-gray-300 focus:border-blue-500 focus:ring-blue-500 ${
                         fieldErrors.phone ? "border-red-500" : ""
                       }`}
                       onChange={handleInputChange}
@@ -397,18 +430,18 @@ export default function SignupPage() {
                       name="acceptTerms"
                       checked={acceptTerms}
                       onCheckedChange={(checked) => setAcceptTerms(checked)}
-                      className="mt-1 border-gray-300 data-[state=checked]:bg-green-600 data-[state=checked]:border-green-600"
+                      className="mt-1 border-gray-300 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
                       required
                       aria-describedby="terms-error"
                     />
                     <div className="text-sm leading-5">
                       <Label htmlFor="acceptTerms" className="text-gray-700 cursor-pointer">
                         I agree to the{" "}
-                        <Link to="/terms" className="text-green-600 hover:text-green-700 underline">
+                        <Link to="/terms" className="text-blue-600 hover:text-blue-700 underline">
                           Terms of Service
                         </Link>{" "}
                         and{" "}
-                        <Link to="/privacy" className="text-green-600 hover:text-green-700 underline">
+                        <Link to="/privacy" className="text-blue-600 hover:text-blue-700 underline">
                           Privacy Policy
                         </Link>
                       </Label>
@@ -422,8 +455,8 @@ export default function SignupPage() {
                 </div>
 
                 {/* Privacy Note */}
-                <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                  <p className="text-xs text-green-800">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <p className="text-xs text-blue-800">
                     🔒 Your data is secure with us. We never share your information with third parties and use
                     industry-standard encryption.
                   </p>
@@ -432,7 +465,7 @@ export default function SignupPage() {
                 {/* Submit Button */}
                 <Button
                   type="submit"
-                  className="w-full bg-green-600 hover:bg-green-700 focus:ring-green-500 text-white font-medium py-2.5"
+                  className="w-full bg-blue-600 hover:bg-blue-700 focus:ring-blue-500 text-white font-medium py-2.5"
                   disabled={isLoading || !acceptTerms || Object.values(fieldErrors).some((error) => error !== "")}
                 >
                   {isLoading ? (
@@ -450,7 +483,7 @@ export default function SignupPage() {
             <CardFooter className="flex flex-col space-y-4 pt-4">
               <div className="text-center text-sm text-gray-600">
                 Already have an account?{" "}
-                <Link to="/login" className="text-green-600 hover:text-green-700 font-medium underline">
+                <Link to="/login" className="text-blue-600 hover:text-blue-700 font-medium underline">
                   Sign in here
                 </Link>
               </div>

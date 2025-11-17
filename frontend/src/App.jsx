@@ -1,13 +1,13 @@
 // src/App.jsx
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import HomePage from "./pages/HomePage";
+import HomePage from "./Home";
 import CategoriesPage from "./pages/CategoriesPage";
 import ProductPage from "./pages/ProductPage";
 import CartPage from "./pages/CartPage";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
-import { Navbar } from './components/Navbar';
-import {Footer} from './components/footer'; 
+import Navbar from './components/Navbar';
+import Footer from './components/footer'; 
 import { AppProvider } from './context/AppContext'; // ✅ import AppProvider
 // import Footer from "./components/Footer";
 
