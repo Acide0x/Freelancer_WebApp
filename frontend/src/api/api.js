@@ -1,5 +1,4 @@
 // src/api/api.js
-
 import axios from "axios";
 
 const apiClient = axios.create({
@@ -8,6 +7,7 @@ const apiClient = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
+  withCredentials: true, // 👈 ADD THIS LINE
 });
 
 export default apiClient;

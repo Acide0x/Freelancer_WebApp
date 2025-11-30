@@ -15,14 +15,12 @@ app.use(cookieParser());
 
 // ✅ Proper CORS setup
 const allowedOrigins = [
-  "https://project-mini-mart.vercel.app",
   "http://localhost:5173"
 ];
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      // allow requests with no origin (like curl or postman)
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) {
         return callback(null, true);
@@ -31,7 +29,7 @@ app.use(
       }
     },
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], // ← Add PATCH here
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );

@@ -9,9 +9,9 @@ require("dotenv").config();
 // Cookie options
 const cookieOptions = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production", // Use 'secure' in production (HTTPS)
-  sameSite: "strict",
-  maxAge: 24 * 60 * 60 * 1000, // 1 day in milliseconds
+  secure: false, // because localhost is HTTP
+  sameSite: "lax", // ← critical fix
+  maxAge: 24 * 60 * 60 * 1000,
 };
 
 // Rate limiters
@@ -255,4 +255,226 @@ exports.logout = (req, res) => {
   // Clear the 'token' cookie using the same options it was set with
   res.clearCookie("token", cookieOptions);
   res.json({ message: "Logged out successfully" });
+};
+
+
+// @desc    Update user profile (authenticated users only)
+// @route   PATCH /api/auth/profile
+// @access  Private
+exports.updateUser = async (req, res) => {
+  const { 
+    fullName, 
+    email, 
+    phone, 
+    location, 
+    avatar, 
+    providerDetails, 
+    customerPreferences 
+  } = req.body;
+
+  const userId = req.user?.id;
+  if (!userId) {
+    return res.status(401).json({ message: "Authentication required" });
+  }
+
+  try {
+    const updates = {};
+
+    // --- Basic fields ---
+    if (fullName !== undefined) {
+      if (typeof fullName !== 'string' || fullName.trim().length < 2) {
+        return res.status(400).json({ message: "Full name must be a string with at least 2 characters." });
+      }
+      updates.fullName = fullName.trim();
+    }
+
+    if (email !== undefined) {
+      const normalizedEmail = email.toLowerCase().trim();
+      if (!validator.isEmail(normalizedEmail)) {
+        return res.status(400).json({ message: "Invalid email format." });
+      }
+      const existing = await User.findOne({ email: normalizedEmail, _id: { $ne: userId } });
+      if (existing) {
+        return res.status(400).json({ message: "Email already in use." });
+      }
+      updates.email = normalizedEmail;
+    }
+
+    if (phone !== undefined) {
+      updates.phone = typeof phone === 'string' ? phone.trim() || undefined : undefined;
+    }
+
+    if (avatar !== undefined) {
+      if (typeof avatar !== 'string') {
+        return res.status(400).json({ message: "Avatar must be a URL string." });
+      }
+      updates.avatar = avatar.trim();
+    }
+
+    // --- Location (GeoJSON) ---
+    if (location !== undefined) {
+      // Only allow full update of location object to maintain schema integrity
+      if (
+        !location ||
+        location.type !== 'Point' ||
+        !Array.isArray(location.coordinates) ||
+        location.coordinates.length !== 2 ||
+        typeof location.coordinates[0] !== 'number' ||
+        typeof location.coordinates[1] !== 'number'
+      ) {
+        return res.status(400).json({
+          message: "Invalid location. Must be { type: 'Point', coordinates: [lng, lat], address?: string }"
+        });
+      }
+      updates.location = {
+        type: 'Point',
+        coordinates: location.coordinates,
+        address: typeof location.address === 'string' ? location.address.trim() : undefined
+      };
+    }
+
+    // --- Provider details (role-restricted) ---
+    if (providerDetails !== undefined) {
+      const user = await User.findById(userId).select('role');
+      if (!user || user.role !== 'provider') {
+        return res.status(403).json({ message: "Only providers can update provider details." });
+      }
+
+      const allowedProviderFields = ['bio', 'skills', 'hourlyRate', 'experienceYears'];
+      const sanitized = {};
+
+      if (providerDetails.bio !== undefined) {
+        if (typeof providerDetails.bio !== 'string') return res.status(400).json({ message: "Bio must be a string." });
+        sanitized.bio = providerDetails.bio.trim();
+      }
+
+      if (providerDetails.skills !== undefined) {
+        if (!Array.isArray(providerDetails.skills)) return res.status(400).json({ message: "Skills must be an array." });
+        sanitized.skills = providerDetails.skills.map(s => s.trim()).filter(s => s);
+      }
+
+      if (providerDetails.hourlyRate !== undefined) {
+        if (typeof providerDetails.hourlyRate !== 'number' || providerDetails.hourlyRate < 0) {
+          return res.status(400).json({ message: "Hourly rate must be a non-negative number." });
+        }
+        sanitized.hourlyRate = providerDetails.hourlyRate;
+      }
+
+      if (providerDetails.experienceYears !== undefined) {
+        if (!Number.isInteger(providerDetails.experienceYears) || providerDetails.experienceYears < 0) {
+          return res.status(400).json({ message: "Experience years must be a non-negative integer." });
+        }
+        sanitized.experienceYears = providerDetails.experienceYears;
+      }
+
+      // IMPORTANT: Do NOT allow updating isVerified, kycVerified, certifications, portfolio, serviceAreas here
+      updates['providerDetails'] = sanitized;
+    }
+
+    // --- Customer preferences (role-restricted) ---
+    if (customerPreferences !== undefined) {
+      const user = await User.findById(userId).select('role');
+      if (!user || user.role !== 'customer') {
+        return res.status(403).json({ message: "Only customers can update customer preferences." });
+      }
+
+      const pref = {};
+      if (customerPreferences.preferredCategories !== undefined) {
+        if (!Array.isArray(customerPreferences.preferredCategories)) {
+          return res.status(400).json({ message: "Preferred categories must be an array of strings." });
+        }
+        pref.preferredCategories = customerPreferences.preferredCategories
+          .map(c => c.trim())
+          .filter(c => c);
+      }
+
+      if (customerPreferences.favoriteProviders !== undefined) {
+        if (!Array.isArray(customerPreferences.favoriteProviders)) {
+          return res.status(400).json({ message: "Favorite providers must be an array of user IDs." });
+        }
+        // Validate ObjectId format
+        const invalidId = customerPreferences.favoriteProviders.find(id => !mongoose.Types.ObjectId.isValid(id));
+        if (invalidId) {
+          return res.status(400).json({ message: "Invalid provider ID in favoriteProviders." });
+        }
+        pref.favoriteProviders = customerPreferences.favoriteProviders.map(id => new mongoose.Types.ObjectId(id));
+      }
+
+      updates.customerPreferences = pref;
+    }
+
+    // Prevent modification of protected fields
+    const protectedFields = [
+      'password', 'role', 'isActive', 'isSuspended', 'isEmailVerified',
+      'providerDetails.isVerified', 'providerDetails.kycVerified',
+      'providerDetails.certifications', 'providerDetails.portfolio', 'providerDetails.serviceAreas',
+      'ratings', 'reviews', 'adminNotes'
+    ];
+
+    // Check if any protected field is accidentally included
+    const updateKeys = Object.keys(req.body);
+    for (const key of updateKeys) {
+      if (protectedFields.includes(key) || key.startsWith('providerDetails.isVerified') || key.startsWith('ratings') || key === 'role') {
+        return res.status(403).json({ message: `Cannot update protected field: ${key}` });
+      }
+    }
+
+    // Perform update
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { $set: updates },
+      { new: true, runValidators: true, context: 'query' }
+    ).select('-password');
+
+    if (!updatedUser) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    // Build safe response
+    const response = {
+      id: updatedUser._id,
+      fullName: updatedUser.fullName,
+      email: updatedUser.email,
+      phone: updatedUser.phone,
+      avatar: updatedUser.avatar,
+      role: updatedUser.role,
+      location: updatedUser.location?.coordinates ? {
+        type: 'Point',
+        coordinates: updatedUser.location.coordinates,
+        address: updatedUser.location.address
+      } : undefined,
+    };
+
+    if (updatedUser.role === 'provider') {
+      response.providerDetails = {
+        bio: updatedUser.providerDetails?.bio,
+        skills: updatedUser.providerDetails?.skills,
+        hourlyRate: updatedUser.providerDetails?.hourlyRate,
+        experienceYears: updatedUser.providerDetails?.experienceYears,
+        // Excluded: isVerified, kycVerified, certifications, portfolio, serviceAreas
+      };
+    }
+
+    if (updatedUser.role === 'customer') {
+      response.customerPreferences = {
+        favoriteProviders: updatedUser.customerPreferences?.favoriteProviders,
+        preferredCategories: updatedUser.customerPreferences?.preferredCategories,
+      };
+    }
+
+    res.json({ message: "Profile updated successfully", user: response });
+
+  } catch (error) {
+    console.error("Update User Error:", error);
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({
+        message: "Validation failed",
+        details: Object.values(error.errors).map(e => e.message)
+      });
+    }
+    if (error.code === 11000) {
+      return res.status(400).json({ message: "Duplicate field value entered" });
+    }
+    res.status(500).json({ message: "Server error during profile update." });
+  }
 };
