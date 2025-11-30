@@ -1,18 +1,18 @@
-// routes/auth.route.js
-
+// routes/user.route.js
 const express = require("express");
 const router = express.Router();
-const authController = require("../controllers/user.controller"); // Updated import name
-const { signupLimiter, loginLimiter } = authController; // Import rate limiters
+const userController = require("../controllers/user.controller");
+const { signupLimiter, loginLimiter } = userController;
 
-// Apply rate limiting and route handlers
-// Signup route with rate limiter
-router.post("/signup", signupLimiter, authController.signup);
+// ✅ Import your auth middleware (named verifyAuth)
+const verifyAuth = require("../middlewares/authMiddleware");
 
-// Login route with rate limiter
-router.post("/login", loginLimiter, authController.login);
+// Public routes
+router.post("/signup", signupLimiter, userController.signup);
+router.post("/login", loginLimiter, userController.login);
+router.post("/logout", userController.logout);
 
-// Logout route (optional, also public)
-router.post("/logout", authController.logout);
+// ✅ Protected route: use verifyAuth middleware
+router.patch("/profile", verifyAuth, userController.updateUser);
 
 module.exports = router;

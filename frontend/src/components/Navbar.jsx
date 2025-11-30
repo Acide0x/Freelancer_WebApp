@@ -1,12 +1,74 @@
-import { useState } from 'react';
-import { Menu, X, Zap } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Menu, X, Zap, User, LogOut, Settings, PawPrint, MessageSquare, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Separator } from '@/components/ui/separator';
 
 export default function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
+  const [user, setUser] = useState(null);
+  const userRef = useRef(null);
+
   const location = useLocation();
+  const navigate = useNavigate();
   const isAuthPage = ["/login", "/signup"].includes(location.pathname);
+
+  const getUserFromStorage = () => {
+    const userStr = localStorage.getItem("user");
+    if (userStr) {
+      try {
+        const parsed = JSON.parse(userStr);
+        // Standardize to _id (Mongoose) but keep all fields as-is
+        return { ...parsed, _id: parsed.id || parsed._id };
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  };
+
+  const refreshUser = () => {
+    const currentUser = getUserFromStorage();
+    if (JSON.stringify(currentUser) !== JSON.stringify(userRef.current)) {
+      userRef.current = currentUser;
+      setUser(currentUser);
+    }
+  };
+
+  useEffect(() => {
+    refreshUser();
+
+    const handleStorageChange = (e) => {
+      if (e.key === "user") {
+        refreshUser();
+      }
+    };
+    window.addEventListener("storage", handleStorageChange);
+
+    const interval = setInterval(refreshUser, 1000);
+
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+      clearInterval(interval);
+    };
+  }, []);
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    userRef.current = null;
+    setUser(null);
+    if (!isAuthPage) {
+      navigate("/login", { replace: true });
+    }
+  };
 
   return (
     <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-md border-b border-border">
@@ -37,17 +99,69 @@ export default function Navbar() {
           </Link>
         </div>
 
-        {/* Auth Buttons (Desktop) */}
-        {!isAuthPage && (
-          <div className="hidden md:flex items-center gap-4">
-            <Link to="/login">
-              <Button variant="ghost">Sign In</Button>
-            </Link>
-            <Link to="/signup">
-              <Button className="bg-green-600 hover:bg-green-700 text-white">Get Started</Button>
-            </Link>
-          </div>
-        )}
+        {/* Desktop: Auth or Profile */}
+        <div className="hidden md:flex items-center gap-4">
+          {!user && !isAuthPage ? (
+            <>
+              <Link to="/login">
+                <Button variant="ghost">Sign In</Button>
+              </Link>
+              <Link to="/signup">
+                <Button className="bg-green-600 hover:bg-green-700 text-white">Get Started</Button>
+              </Link>
+            </>
+          ) : user ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="flex items-center space-x-2 rounded-full px-2 py-1">
+                  <Avatar className="h-9 w-9 border">
+                    <AvatarImage 
+                      src={user.profilePic || "/placeholder.svg"} 
+                      alt={user.fullName || "User"} 
+                    />
+                    <AvatarFallback>
+                      {user.fullName?.charAt(0)?.toUpperCase() || 'U'}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="font-medium text-sm hidden sm:inline">{user.fullName}</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56 p-1">
+                <div className="px-3 py-2 border-b mb-1">
+                  <p className="font-medium">{user.fullName}</p>
+                  <p className="text-xs capitalize text-muted-foreground">{user.role}</p>
+                </div>
+
+                {user.role === "admin" && (
+                  <DropdownMenuItem asChild>
+                    <Link to="/admindashboard" className="flex items-center text-sm px-3 py-2 rounded-md">
+                      <Settings className="h-4 w-4 mr-2" />
+                      Admin Dashboard
+                    </Link>
+                  </DropdownMenuItem>
+                )}
+
+                <DropdownMenuItem asChild>
+                  <Link to="/profile" className="flex items-center text-sm px-3 py-2 rounded-md">
+                    <User className="h-4 w-4 mr-2" />
+                    View Profile
+                  </Link>
+                </DropdownMenuItem>
+
+               
+                <Separator className="my-1" />
+
+                <DropdownMenuItem
+                  onClick={handleLogout}
+                  className="flex items-center text-sm px-3 py-2 rounded-md text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
+                >
+                  <LogOut className="h-4 w-4 mr-2" />
+                  Log out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+        </div>
 
         {/* Mobile Menu Button */}
         <button
@@ -61,7 +175,7 @@ export default function Navbar() {
 
       {/* Mobile Menu */}
       {isOpen && (
-        <div className="md:hidden border-t border-border p-4 space-y-4 animate-fade-in-up">
+        <div className="md:hidden border-t border-border p-4 space-y-4">
           <Link to="/jobs" className="block text-foreground/80 hover:text-foreground font-medium" onClick={() => setIsOpen(false)}>
             Find Work
           </Link>
@@ -75,15 +189,47 @@ export default function Navbar() {
             Support
           </Link>
 
-          {/* Mobile Auth Buttons */}
           {!isAuthPage && (
             <div className="flex flex-col gap-2 pt-4">
-              <Link to="/login" className="w-full" onClick={() => setIsOpen(false)}>
-                <Button variant="ghost" className="w-full">Sign In</Button>
-              </Link>
-              <Link to="/signup" className="w-full" onClick={() => setIsOpen(false)}>
-                <Button className="w-full bg-green-600 hover:bg-green-700 text-white">Get Started</Button>
-              </Link>
+              {user ? (
+                <>
+                  <div className="flex items-center gap-3 p-2">
+                    <Avatar className="h-10 w-10 border">
+                      <AvatarImage 
+                        src={user.profilePic || "/placeholder.svg"} 
+                        alt={user.fullName || "User"} 
+                      />
+                      <AvatarFallback>
+                        {user.fullName?.charAt(0)?.toUpperCase() || 'U'}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="font-medium">{user.fullName}</p>
+                      <p className="text-xs text-muted-foreground capitalize">{user.role}</p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="w-full text-red-500"
+                    onClick={() => {
+                      handleLogout();
+                      setIsOpen(false);
+                    }}
+                  >
+                    <LogOut className="w-4 h-4 mr-2" />
+                    Log out
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Link to="/login" className="w-full" onClick={() => setIsOpen(false)}>
+                    <Button variant="ghost" className="w-full">Sign In</Button>
+                  </Link>
+                  <Link to="/signup" className="w-full" onClick={() => setIsOpen(false)}>
+                    <Button className="w-full bg-green-600 hover:bg-green-700 text-white">Get Started</Button>
+                  </Link>
+                </>
+              )}
             </div>
           )}
         </div>
