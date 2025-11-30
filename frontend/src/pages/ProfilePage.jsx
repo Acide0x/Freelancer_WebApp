@@ -186,7 +186,7 @@ export default function ProfilePage() {
         }
 
         try {
-            await api.patch("/api/users/change-password", {
+            await api.patch("/users/change-password", {
                 oldPassword: passwordForm.oldPassword,
                 newPassword: passwordForm.newPassword,
             });
