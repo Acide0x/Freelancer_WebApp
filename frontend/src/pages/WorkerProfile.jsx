@@ -417,6 +417,7 @@ export default function WorkerProfilePage() {
           </div>
         </section>
 
+
         {/* Footer (optional: you can move to shared component) */}
         <footer className="bg-card border-t border-border py-8 sm:py-12 mt-12">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
