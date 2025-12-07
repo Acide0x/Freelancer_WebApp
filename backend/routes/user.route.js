@@ -15,4 +15,7 @@ router.post("/logout", userController.logout);
 // ✅ Protected route: use verifyAuth middleware
 router.patch("/profile", verifyAuth, userController.updateUser);
 
+// Add this with your other routes
+router.patch("/change-password", verifyAuth, userController.changePassword);
+
 module.exports = router;

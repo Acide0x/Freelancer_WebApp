@@ -1,5 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
-import { Menu, X, Zap, User, LogOut, Settings, PawPrint, MessageSquare, AlertTriangle } from 'lucide-react';
+import {
+  Bell,
+  Menu,
+  X,
+  Zap,
+  User,
+  LogOut,
+  Settings,
+  MessageSquare,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -25,7 +34,6 @@ export default function Navbar() {
     if (userStr) {
       try {
         const parsed = JSON.parse(userStr);
-        // Standardize to _id (Mongoose) but keep all fields as-is
         return { ...parsed, _id: parsed.id || parsed._id };
       } catch (e) {
         return null;
@@ -100,7 +108,7 @@ export default function Navbar() {
         </div>
 
         {/* Desktop: Auth or Profile */}
-        <div className="hidden md:flex items-center gap-4">
+        <div className="hidden md:flex items-center gap-3">
           {!user && !isAuthPage ? (
             <>
               <Link to="/login">
@@ -111,55 +119,68 @@ export default function Navbar() {
               </Link>
             </>
           ) : user ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="flex items-center space-x-2 rounded-full px-2 py-1">
-                  <Avatar className="h-9 w-9 border">
-                    <AvatarImage 
-                      src={user.profilePic || "/placeholder.svg"} 
-                      alt={user.fullName || "User"} 
-                    />
-                    <AvatarFallback>
-                      {user.fullName?.charAt(0)?.toUpperCase() || 'U'}
-                    </AvatarFallback>
-                  </Avatar>
-                  <span className="font-medium text-sm hidden sm:inline">{user.fullName}</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56 p-1">
-                <div className="px-3 py-2 border-b mb-1">
-                  <p className="font-medium">{user.fullName}</p>
-                  <p className="text-xs capitalize text-muted-foreground">{user.role}</p>
-                </div>
+            <>
+              {/* Notification Bell */}
+              <button className="p-2 rounded-full hover:bg-secondary transition-colors" aria-label="Notifications">
+                <Bell className="w-5 h-5 text-muted-foreground" />
+              </button>
 
-                {user.role === "admin" && (
+              {/* Avatar Dropdown */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="p-0 h-auto w-auto">
+                    <Avatar className="h-9 w-9 border">
+                      <AvatarImage
+                        src={user.profilePic || "/placeholder.svg"}
+                        alt={user.fullName || "User"}
+                      />
+                      <AvatarFallback>
+                        {user.fullName?.charAt(0)?.toUpperCase() || 'U'}
+                      </AvatarFallback>
+                    </Avatar>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56 p-1">
+                  <div className="px-3 py-2 border-b mb-1">
+                    <p className="font-medium">{user.fullName}</p>
+                    <p className="text-xs capitalize text-muted-foreground">{user.role}</p>
+                  </div>
+
+                  {user.role === "admin" && (
+                    <DropdownMenuItem asChild>
+                      <Link to="/admindashboard" className="flex items-center text-sm px-3 py-2 rounded-md">
+                        <Settings className="h-4 w-4 mr-2" />
+                        Admin Dashboard
+                      </Link>
+                    </DropdownMenuItem>
+                  )}
+
                   <DropdownMenuItem asChild>
-                    <Link to="/admindashboard" className="flex items-center text-sm px-3 py-2 rounded-md">
-                      <Settings className="h-4 w-4 mr-2" />
-                      Admin Dashboard
+                    <Link to="/workersdashboard" className="flex items-center text-sm px-3 py-2 rounded-md">
+                      <MessageSquare className="h-4 w-4 mr-2" />
+                      Dashboard
                     </Link>
                   </DropdownMenuItem>
-                )}
 
-                <DropdownMenuItem asChild>
-                  <Link to="/profile" className="flex items-center text-sm px-3 py-2 rounded-md">
-                    <User className="h-4 w-4 mr-2" />
-                    View Profile
-                  </Link>
-                </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/profile" className="flex items-center text-sm px-3 py-2 rounded-md">
+                      <User className="h-4 w-4 mr-2" />
+                      View Profile
+                    </Link>
+                  </DropdownMenuItem>
 
-               
-                <Separator className="my-1" />
+                  <Separator className="my-1" />
 
-                <DropdownMenuItem
-                  onClick={handleLogout}
-                  className="flex items-center text-sm px-3 py-2 rounded-md text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
-                >
-                  <LogOut className="h-4 w-4 mr-2" />
-                  Log out
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                  <DropdownMenuItem
+                    onClick={handleLogout}
+                    className="flex items-center text-sm px-3 py-2 rounded-md text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20"
+                  >
+                    <LogOut className="h-4 w-4 mr-2" />
+                    Log out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
           ) : null}
         </div>
 
@@ -195,9 +216,9 @@ export default function Navbar() {
                 <>
                   <div className="flex items-center gap-3 p-2">
                     <Avatar className="h-10 w-10 border">
-                      <AvatarImage 
-                        src={user.profilePic || "/placeholder.svg"} 
-                        alt={user.fullName || "User"} 
+                      <AvatarImage
+                        src={user.profilePic || "/placeholder.svg"}
+                        alt={user.fullName || "User"}
                       />
                       <AvatarFallback>
                         {user.fullName?.charAt(0)?.toUpperCase() || 'U'}
@@ -208,6 +229,15 @@ export default function Navbar() {
                       <p className="text-xs text-muted-foreground capitalize">{user.role}</p>
                     </div>
                   </div>
+
+                  {/* 👇 MOBILE DASHBOARD LINK */}
+                  <Link to="/workersdashboard" className="w-full" onClick={() => setIsOpen(false)}>
+                    <Button variant="outline" className="w-full justify-start">
+                      <MessageSquare className="w-4 h-4 mr-2" />
+                      Dashboard
+                    </Button>
+                  </Link>
+
                   <Button
                     variant="outline"
                     className="w-full text-red-500"

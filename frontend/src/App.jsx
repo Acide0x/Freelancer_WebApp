@@ -7,9 +7,12 @@ import JobsPage from "./pages/JobListing";
 import WorkersPage from "./pages/WorkerListing";
 import WorkerProfile from "./pages/WorkerProfile";
 import ProfilePage from "./pages/ProfilePage";
+import WorkersDashboardPage from "./pages/WorkersDashboardPage"; // ✅ Only dashboard route needed
+
 import Navbar from './components/Navbar';
 import Footer from './components/footer'; 
 import { AppProvider } from './context/AppContext';
+import { Toaster } from 'sonner'; // ✅ Add Sonner Toaster (recommended)
 
 export default function App() {
   return (
@@ -21,17 +24,24 @@ export default function App() {
         }}
       >
         <Navbar />
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/signup" element={<SignupPage />} />
-          <Route path="/jobs" element={<JobsPage />} />
-          <Route path="/workers" element={<WorkersPage />} />
-          <Route path="/worker/:id" element={<WorkerProfile />} />
-          <Route path="/profile" element={<ProfilePage />} />
-          {/* Add more routes as needed */}
-        </Routes>
+        <main className="min-h-screen">
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/signup" element={<SignupPage />} />
+            <Route path="/jobs" element={<JobsPage />} />
+            <Route path="/workers" element={<WorkersPage />} />
+            <Route path="/worker/:id" element={<WorkerProfile />} />
+            <Route path="/profile" element={<ProfilePage />} />
+            {/* ✅ Single route for full worker dashboard */}
+            <Route path="/workersdashboard" element={<WorkersDashboardPage />} />
+            {/* Optional: catch-all fallback */}
+            <Route path="*" element={<HomePage />} />
+          </Routes>
+        </main>
         <Footer />
+        {/* ✅ Render Sonner Toaster once in the app */}
+        <Toaster position="top-right" richColors />
       </BrowserRouter>
     </AppProvider>
   );
