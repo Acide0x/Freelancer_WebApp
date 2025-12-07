@@ -91,37 +91,47 @@ export default function ProfilePage() {
         setIsSaving(true);
 
         const payload = {};
+
+        // Always send top-level fields if changed
         if (formData.name !== profile.name) payload.fullName = formData.name;
         if (formData.email !== profile.email) payload.email = formData.email;
         if (formData.phone !== profile.phone) payload.phone = formData.phone;
-        if (formData.location !== profile.location) payload.location = formData.location;
         if (formData.avatar !== profile.avatar) payload.avatar = formData.avatar;
 
-        // Handle bio based on role
+        // ✅ Location: send as plain string (e.g., "Kathmandu")
+        if (formData.location !== profile.location) {
+            payload.location = formData.location; // ← just the string!
+        }
+
+        // ✅ Bio: send using dot notation for providers
         if (initialUser.role === "provider") {
             const currentBio = profile.bio || "";
             if (formData.bio !== currentBio) {
-                payload.providerDetails = { bio: formData.bio };
-            }
-        } else {
-            if (formData.bio !== profile.bio) {
-                payload.bio = formData.bio;
+                // ⚠️ Critical: Use dot notation key
+                payload["providerDetails.bio"] = formData.bio;
             }
         }
+        // If you later support customer bio, handle separately—but your model doesn’t have top-level bio
 
         try {
-            // ✅ Use your api client (Axios)
             const response = await api.patch("/users/profile", payload);
-            const data = response.data; // Axios stores response body in .data
+            const data = response.data;
 
-            // Reconstruct profile with normalized fields
+            // Reconstruct profile from response
             const updatedProfile = {
                 ...data.user,
                 name: data.user.fullName,
                 bio: initialUser.role === "provider"
                     ? (data.user.providerDetails?.bio || "No bio yet.")
-                    : (data.user.bio || "No bio yet."),
-                location: data.user.location?.address || data.user.location || "Not specified",
+                    : "No bio yet.", // customer bio not supported in your model
+                location: data.user.location?.address || "Not specified",
+                avatar: data.user.avatar || "/placeholder.svg",
+                joinDate: data.user.createdAt
+                    ? new Date(data.user.createdAt).toLocaleDateString("en-US", {
+                        year: "numeric",
+                        month: "long",
+                    })
+                    : "Unknown",
             };
 
             setProfile(updatedProfile);
@@ -199,6 +209,21 @@ export default function ProfilePage() {
                 "Failed to update password. Please try again.";
             toast.error(message);
         }
+    };
+
+    const getRoleBadgeStyles = (role) => {
+        if (role === "provider") {
+            return {
+                background: "bg-purple-100",
+                text: "text-purple-700",
+                label: "Service Provider",
+            };
+        }
+        return {
+            background: "bg-blue-100",
+            text: "text-blue-700",
+            label: "Customer",
+        };
     };
 
     return (
@@ -291,9 +316,18 @@ export default function ProfilePage() {
                                     placeholder="Full name"
                                 />
                             ) : (
-                                <h2 className="text-2xl font-bold mb-2 text-gray-900">
-                                    {profile.name}
-                                </h2>
+                                <div className="flex items-center gap-3 mb-2">
+                                    <h2 className="text-2xl font-bold text-gray-900">
+                                        {profile.name}
+                                    </h2>
+                                    {profile && (
+                                        <span
+                                            className={`${getRoleBadgeStyles(profile.role).background} ${getRoleBadgeStyles(profile.role).text} px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wide`}
+                                        >
+                                            {getRoleBadgeStyles(profile.role).label}
+                                        </span>
+                                    )}
+                                </div>
                             )}
                             {isEditing ? (
                                 <Input

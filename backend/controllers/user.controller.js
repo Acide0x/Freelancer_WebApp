@@ -4,6 +4,8 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const rateLimit = require("express-rate-limit");
 const validator = require("validator");
+const geocodeLocation = require("../utils/geocode");
+const mongoose = require("mongoose");
 require("dotenv").config();
 
 // Cookie options
@@ -197,7 +199,7 @@ exports.login = async (req, res) => {
     }
 
     // Find user by email, retrieving the password for comparison
-    const userWithPassword = await User.findOne({ email: normalizedEmail });
+    const userWithPassword = await User.findOne({ email: normalizedEmail }).select('+password');
     if (!userWithPassword) {
       // This should ideally not happen if the first query found a user, but added for safety
       return res.status(400).json({ message: "Invalid credentials - User not found" });
@@ -262,167 +264,99 @@ exports.logout = (req, res) => {
 // @route   PATCH /api/auth/profile
 // @access  Private
 exports.updateUser = async (req, res) => {
-  const { 
-    fullName, 
-    email, 
-    phone, 
-    location, 
-    avatar, 
-    providerDetails, 
-    customerPreferences 
-  } = req.body;
-
   const userId = req.user?.id;
   if (!userId) {
     return res.status(401).json({ message: "Authentication required" });
   }
 
   try {
-    const updates = {};
+    // Start with an empty update object
+    const updateObj = {};
 
-    // --- Basic fields ---
-    if (fullName !== undefined) {
-      if (typeof fullName !== 'string' || fullName.trim().length < 2) {
-        return res.status(400).json({ message: "Full name must be a string with at least 2 characters." });
-      }
-      updates.fullName = fullName.trim();
-    }
+    // Allow dot-notation fields (e.g., "providerDetails.bio")
+    const allowedTopLevel = ['fullName', 'email', 'phone', 'avatar', 'location'];
+    const allowedNested = ['providerDetails.bio']; // Add more if needed, e.g., 'providerDetails.skills'
 
-    if (email !== undefined) {
-      const normalizedEmail = email.toLowerCase().trim();
-      if (!validator.isEmail(normalizedEmail)) {
-        return res.status(400).json({ message: "Invalid email format." });
-      }
-      const existing = await User.findOne({ email: normalizedEmail, _id: { $ne: userId } });
-      if (existing) {
-        return res.status(400).json({ message: "Email already in use." });
-      }
-      updates.email = normalizedEmail;
-    }
-
-    if (phone !== undefined) {
-      updates.phone = typeof phone === 'string' ? phone.trim() || undefined : undefined;
-    }
-
-    if (avatar !== undefined) {
-      if (typeof avatar !== 'string') {
-        return res.status(400).json({ message: "Avatar must be a URL string." });
-      }
-      updates.avatar = avatar.trim();
-    }
-
-    // --- Location (GeoJSON) ---
-    if (location !== undefined) {
-      // Only allow full update of location object to maintain schema integrity
-      if (
-        !location ||
-        location.type !== 'Point' ||
-        !Array.isArray(location.coordinates) ||
-        location.coordinates.length !== 2 ||
-        typeof location.coordinates[0] !== 'number' ||
-        typeof location.coordinates[1] !== 'number'
-      ) {
-        return res.status(400).json({
-          message: "Invalid location. Must be { type: 'Point', coordinates: [lng, lat], address?: string }"
-        });
-      }
-      updates.location = {
-        type: 'Point',
-        coordinates: location.coordinates,
-        address: typeof location.address === 'string' ? location.address.trim() : undefined
-      };
-    }
-
-    // --- Provider details (role-restricted) ---
-    if (providerDetails !== undefined) {
-      const user = await User.findById(userId).select('role');
-      if (!user || user.role !== 'provider') {
-        return res.status(403).json({ message: "Only providers can update provider details." });
-      }
-
-      const allowedProviderFields = ['bio', 'skills', 'hourlyRate', 'experienceYears'];
-      const sanitized = {};
-
-      if (providerDetails.bio !== undefined) {
-        if (typeof providerDetails.bio !== 'string') return res.status(400).json({ message: "Bio must be a string." });
-        sanitized.bio = providerDetails.bio.trim();
-      }
-
-      if (providerDetails.skills !== undefined) {
-        if (!Array.isArray(providerDetails.skills)) return res.status(400).json({ message: "Skills must be an array." });
-        sanitized.skills = providerDetails.skills.map(s => s.trim()).filter(s => s);
-      }
-
-      if (providerDetails.hourlyRate !== undefined) {
-        if (typeof providerDetails.hourlyRate !== 'number' || providerDetails.hourlyRate < 0) {
-          return res.status(400).json({ message: "Hourly rate must be a non-negative number." });
+    // Handle each field in req.body
+    for (const [key, value] of Object.entries(req.body)) {
+      // 1. Handle top-level simple fields
+      if (allowedTopLevel.includes(key)) {
+        if (key === 'fullName') {
+          if (typeof value !== 'string' || value.trim().length < 2) {
+            return res.status(400).json({ message: "Full name must be a string with at least 2 characters." });
+          }
+          updateObj.fullName = value.trim();
         }
-        sanitized.hourlyRate = providerDetails.hourlyRate;
-      }
-
-      if (providerDetails.experienceYears !== undefined) {
-        if (!Number.isInteger(providerDetails.experienceYears) || providerDetails.experienceYears < 0) {
-          return res.status(400).json({ message: "Experience years must be a non-negative integer." });
+        else if (key === 'email') {
+          const normalized = value.toLowerCase().trim();
+          if (!validator.isEmail(normalized)) {
+            return res.status(400).json({ message: "Invalid email format." });
+          }
+          const existing = await User.findOne({ email: normalized, _id: { $ne: userId } });
+          if (existing) return res.status(400).json({ message: "Email already in use." });
+          updateObj.email = normalized;
         }
-        sanitized.experienceYears = providerDetails.experienceYears;
+        else if (key === 'phone') {
+          updateObj.phone = typeof value === 'string' ? value.trim() || undefined : undefined;
+        }
+        else if (key === 'avatar') {
+          if (typeof value !== 'string') {
+            return res.status(400).json({ message: "Avatar must be a URL string." });
+          }
+          updateObj.avatar = value.trim();
+        }
+        else if (key === 'location') {
+          // 🌍 SPECIAL: Handle location string → geocode
+          if (typeof value === 'string' && value.trim()) {
+            const geo = await geocodeLocation(value.trim());
+            if (!geo) {
+              return res.status(400).json({ message: "Location not found. Please try a more specific address." });
+            }
+            updateObj.location = {
+              type: 'Point',
+              coordinates: [geo.lng, geo.lat],
+              address: geo.address,
+            };
+          } else if (value === null || value === '') {
+            updateObj.location = undefined; // clear location
+          }
+          // If value is already a GeoJSON object (advanced), you could allow it — but not needed for now
+        }
       }
-
-      // IMPORTANT: Do NOT allow updating isVerified, kycVerified, certifications, portfolio, serviceAreas here
-      updates['providerDetails'] = sanitized;
+      // 2. Handle nested dot-notation fields
+      else if (key === 'providerDetails.bio') {
+        const user = await User.findById(userId).select('role');
+        if (!user || user.role !== 'provider') {
+          return res.status(403).json({ message: "Only providers can update bio." });
+        }
+        if (typeof value !== 'string') {
+          return res.status(400).json({ message: "Bio must be a string." });
+        }
+        updateObj['providerDetails.bio'] = value.trim();
+      }
+      // ⚠️ Reject any other field (security)
+      else {
+        return res.status(400).json({ message: `Invalid or unsupported update field: ${key}` });
+      }
     }
 
-    // --- Customer preferences (role-restricted) ---
-    if (customerPreferences !== undefined) {
-      const user = await User.findById(userId).select('role');
-      if (!user || user.role !== 'customer') {
-        return res.status(403).json({ message: "Only customers can update customer preferences." });
-      }
-
-      const pref = {};
-      if (customerPreferences.preferredCategories !== undefined) {
-        if (!Array.isArray(customerPreferences.preferredCategories)) {
-          return res.status(400).json({ message: "Preferred categories must be an array of strings." });
-        }
-        pref.preferredCategories = customerPreferences.preferredCategories
-          .map(c => c.trim())
-          .filter(c => c);
-      }
-
-      if (customerPreferences.favoriteProviders !== undefined) {
-        if (!Array.isArray(customerPreferences.favoriteProviders)) {
-          return res.status(400).json({ message: "Favorite providers must be an array of user IDs." });
-        }
-        // Validate ObjectId format
-        const invalidId = customerPreferences.favoriteProviders.find(id => !mongoose.Types.ObjectId.isValid(id));
-        if (invalidId) {
-          return res.status(400).json({ message: "Invalid provider ID in favoriteProviders." });
-        }
-        pref.favoriteProviders = customerPreferences.favoriteProviders.map(id => new mongoose.Types.ObjectId(id));
-      }
-
-      updates.customerPreferences = pref;
-    }
-
-    // Prevent modification of protected fields
-    const protectedFields = [
+    // Prevent protected field updates (extra safety)
+    const protectedPaths = [
       'password', 'role', 'isActive', 'isSuspended', 'isEmailVerified',
       'providerDetails.isVerified', 'providerDetails.kycVerified',
-      'providerDetails.certifications', 'providerDetails.portfolio', 'providerDetails.serviceAreas',
-      'ratings', 'reviews', 'adminNotes'
+      'providerDetails.certifications', 'providerDetails.portfolio',
+      'ratings', 'reviews', 'adminNotes', 'createdAt', 'updatedAt'
     ];
-
-    // Check if any protected field is accidentally included
-    const updateKeys = Object.keys(req.body);
-    for (const key of updateKeys) {
-      if (protectedFields.includes(key) || key.startsWith('providerDetails.isVerified') || key.startsWith('ratings') || key === 'role') {
-        return res.status(403).json({ message: `Cannot update protected field: ${key}` });
+    for (const path of protectedPaths) {
+      if (req.body[path] !== undefined) {
+        return res.status(403).json({ message: `Cannot update protected field: ${path}` });
       }
     }
 
-    // Perform update
+    // Perform the update
     const updatedUser = await User.findByIdAndUpdate(
       userId,
-      { $set: updates },
+      { $set: updateObj },
       { new: true, runValidators: true, context: 'query' }
     ).select('-password');
 
@@ -451,7 +385,6 @@ exports.updateUser = async (req, res) => {
         skills: updatedUser.providerDetails?.skills,
         hourlyRate: updatedUser.providerDetails?.hourlyRate,
         experienceYears: updatedUser.providerDetails?.experienceYears,
-        // Excluded: isVerified, kycVerified, certifications, portfolio, serviceAreas
       };
     }
 
@@ -476,5 +409,73 @@ exports.updateUser = async (req, res) => {
       return res.status(400).json({ message: "Duplicate field value entered" });
     }
     res.status(500).json({ message: "Server error during profile update." });
+  }
+};
+
+// @desc    Change user password
+// @route   PATCH /api/auth/change-password
+// @access  Private
+exports.changePassword = async (req, res) => {
+  const userId = req.user?.id;
+  if (!userId) {
+    return res.status(401).json({ message: "Authentication required" });
+  }
+
+  const { oldPassword, newPassword } = req.body;
+
+  // Validate input
+  if (!oldPassword || !newPassword) {
+    return res.status(400).json({ message: "Both old and new passwords are required." });
+  }
+
+  if (typeof oldPassword !== "string" || typeof newPassword !== "string") {
+    return res.status(400).json({ message: "Passwords must be strings." });
+  }
+
+  // Validate new password strength (same as signup)
+  const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+  if (!passwordRegex.test(newPassword)) {
+    return res.status(400).json({
+      message:
+        "New password must be at least 8 characters long, include uppercase, lowercase, number, and special character.",
+    });
+  }
+
+  try {
+    // Fetch user with password
+    const user = await User.findById(userId).select('+password'); // '+password' to include it
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    // Verify old password
+    const isMatch = await bcrypt.compare(oldPassword, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Old password is incorrect." });
+    }
+
+    // Prevent reusing same password
+    if (await bcrypt.compare(newPassword, user.password)) {
+      return res.status(400).json({ message: "New password must be different from the current one." });
+    }
+
+    // Hash and update new password
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    // ⚠️ Optional: Invalidate current session by issuing a new token
+    // (Not strictly needed since password hash changed, but good practice)
+    const newToken = jwt.sign(
+      { id: user._id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || "1d" }
+    );
+    res.cookie("token", newToken, cookieOptions);
+
+    res.json({ message: "Password updated successfully." });
+
+  } catch (error) {
+    console.error("Change Password Error:", error);
+    res.status(500).json({ message: "Server error during password change." });
   }
 };
