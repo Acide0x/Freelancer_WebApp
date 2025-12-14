@@ -1,124 +1,283 @@
-import React, { useState } from "react";
+// JobsPage.jsx
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { LayoutGrid, List, MapPin, Clock, DollarSign } from "lucide-react";
-import { Toaster } from "sonner";
+import { LayoutGrid, List, MapPin, Clock, DollarSign, Plus } from "lucide-react";
+import { Toaster, toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
-// Mock data (unchanged)
-const mockJobs = [
-  {
-    id: "1",
-    title: "Kitchen Renovation - Cabinet Installation",
-    description: "Need experienced carpenter for kitchen cabinet installation and finishing",
-    skills: ["Carpentry", "Cabinet Making", "Finishing"],
-    budget: "$800 - $1200",
-    location: "New York, NY",
-    postedDate: "2 hours ago",
-    jobType: "Contract",
-  },
-  {
-    id: "2",
-    title: "Emergency Plumbing Repair",
-    description: "Burst pipe in bathroom. Need immediate plumber to assess and fix",
-    skills: ["Plumbing", "Pipe Repair", "Water Systems"],
-    budget: "$200 - $400",
-    location: "Brooklyn, NY",
-    postedDate: "30 minutes ago",
-    jobType: "Contract",
-  },
-  {
-    id: "3",
-    title: "Full House Electrical Wiring",
-    description: "New construction project requiring full electrical wiring installation",
-    skills: ["Electrical", "Wiring", "Code Compliance"],
-    budget: "$3000 - $5000",
-    location: "Queens, NY",
-    postedDate: "1 day ago",
-    jobType: "Full-time",
-  },
-  {
-    id: "4",
-    title: "Interior Painting Project",
-    description: "Paint interior walls of 3-bedroom apartment. High-quality finish required",
-    skills: ["Painting", "Drywall Prep", "Interior Design"],
-    budget: "$500 - $800",
-    location: "Manhattan, NY",
-    postedDate: "3 hours ago",
-    jobType: "Contract",
-  },
-  {
-    id: "5",
-    title: "AC Unit Installation",
-    description: "Install new AC unit in office space. Must have certification",
-    skills: ["AC Installation", "HVAC", "Refrigeration"],
-    budget: "$1500 - $2500",
-    location: "New York, NY",
-    postedDate: "12 hours ago",
-    jobType: "Contract",
-  },
-  {
-    id: "6",
-    title: "Auto Repair - Engine Diagnostics",
-    description: "Vehicle making unusual noises. Need diagnostic and repair estimate",
-    skills: ["Engine Repair", "Diagnostics", "Maintenance"],
-    budget: "$150 - $300",
-    location: "Bronx, NY",
-    postedDate: "2 days ago",
-    jobType: "Part-time",
-  },
-  {
-    id: "7",
-    title: "Private Chef - Weekly Meal Prep",
-    description: "Looking for chef to prepare meals 3 days/week for family of 4",
-    skills: ["Cooking", "Menu Planning", "Food Safety"],
-    budget: "$400/week",
-    location: "Remote",
-    postedDate: "4 hours ago",
-    jobType: "Part-time",
-  },
-  {
-    id: "8",
-    title: "Deck Building - Summer Project",
-    description: "Build 20x15 deck with stairs and railing. Design provided",
-    skills: ["Carpentry", "Construction", "Outdoor Building"],
-    budget: "$2000 - $3500",
-    location: "New York, NY",
-    postedDate: "6 hours ago",
-    jobType: "Contract",
-  },
-  {
-    id: "9",
-    title: "Corporate Event Catering",
-    description: "Catering for 150 people corporate event. Menu customization available",
-    skills: ["Catering", "Food Prep", "Event Management"],
-    budget: "$1200 - $1800",
-    location: "Manhattan, NY",
-    postedDate: "1 day ago",
-    jobType: "Contract",
-  },
-  {
-    id: "10",
-    title: "Welding - Metal Gate Repair",
-    description: "Custom metal gate needs welding repair and reinforcement",
-    skills: ["Welding", "Metal Fabrication", "Safety"],
-    budget: "$300 - $500",
-    location: "Staten Island, NY",
-    postedDate: "3 days ago",
-    jobType: "Contract",
-  },
-];
+import api from "../api/api";
 
-// Header styled like Navbar (minimal, clean)
-const Header = ({ variant }) => (
-  <header className="bg-background border-b border-border py-4 px-6">
-    <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-green-500 bg-clip-text text-transparent">
-      {variant === "worker" ? "Find Work" : "Hire Professionals"}
-    </h1>
-  </header>
-);
+function JobRequestForm({ onClose, onJobCreated }) {
+  const [formData, setFormData] = useState({
+    title: "",
+    description: "",
+    category: "",
+    address: "",
+    city: "",
+    budget: "",
+    estimatedDuration: "",
+    durationUnit: "hours",
+    urgency: "medium",
+    preferredDate: "",
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-// JobCard with SkillLink styling
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    if (!formData.title || !formData.description || !formData.category || !formData.address || !formData.budget) {
+      toast.error("Please fill in all required fields");
+      return;
+    }
+
+    if (formData.title.length > 100) {
+      toast.error("Title must be 100 characters or less");
+      return;
+    }
+
+    if (formData.description.length > 2000) {
+      toast.error("Description must be 2000 characters or less");
+      return;
+    }
+
+    const budgetNum = parseFloat(formData.budget);
+    if (isNaN(budgetNum) || budgetNum <= 0) {
+      toast.error("Budget must be a valid positive number");
+      return;
+    }
+
+    const payload = {
+      title: formData.title,
+      description: formData.description,
+      category: formData.category,
+      address: formData.address,
+      city: formData.city || undefined,
+      budget: budgetNum,
+      estimatedDuration: formData.estimatedDuration ? Number(formData.estimatedDuration) : undefined,
+      durationUnit: formData.durationUnit,
+      urgency: formData.urgency,
+      preferredDate: formData.preferredDate || undefined,
+    };
+
+    try {
+      setIsSubmitting(true);
+      const response = await api.post("/jobs/add", payload);
+      toast.success("Job request submitted successfully!");
+      if (onJobCreated) onJobCreated(response.data);
+      onClose();
+    } catch (error) {
+      console.error("Job submission error:", error);
+      const message = error.response?.data?.message || "Failed to submit job. Please try again.";
+      toast.error(message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-5">
+      <div className="space-y-2">
+        <Label htmlFor="title" className="text-sm font-semibold text-foreground">
+          Job Title <span className="text-red-500">*</span>
+        </Label>
+        <Input
+          id="title"
+          placeholder="e.g., Kitchen Cabinet Installation"
+          value={formData.title}
+          onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+          maxLength={100}
+          required
+          className="h-11"
+        />
+        <p className="text-xs text-foreground/60">{formData.title.length}/100 characters</p>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="description" className="text-sm font-semibold text-foreground">
+          Description <span className="text-red-500">*</span>
+        </Label>
+        <Textarea
+          id="description"
+          placeholder="Describe the job in detail..."
+          value={formData.description}
+          onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+          maxLength={2000}
+          required
+          rows={5}
+          className="resize-none"
+        />
+        <p className="text-xs text-foreground/60">{formData.description.length}/2000 characters</p>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="category" className="text-sm font-semibold text-foreground">
+          Category <span className="text-red-500">*</span>
+        </Label>
+        <Select value={formData.category} onValueChange={(value) => setFormData({ ...formData, category: value })}>
+          <SelectTrigger className="h-11">
+            <SelectValue placeholder="Select a category" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="Carpentry">Carpentry</SelectItem>
+            <SelectItem value="Plumbing">Plumbing</SelectItem>
+            <SelectItem value="Electrical">Electrical</SelectItem>
+            <SelectItem value="Painting">Painting</SelectItem>
+            <SelectItem value="HVAC">HVAC</SelectItem>
+            <SelectItem value="Welding">Welding</SelectItem>
+            <SelectItem value="Cooking">Cooking</SelectItem>
+            <SelectItem value="Mechanic">Mechanic</SelectItem>
+            <SelectItem value="House Help">House Help</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="address" className="text-sm font-semibold text-foreground">
+            Address <span className="text-red-500">*</span>
+          </Label>
+          <Input
+            id="address"
+            placeholder="Street address"
+            value={formData.address}
+            onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+            required
+            className="h-11"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="city" className="text-sm font-semibold text-foreground">
+            City
+          </Label>
+          <Input
+            id="city"
+            placeholder="City name"
+            value={formData.city}
+            onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+            className="h-11"
+          />
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="budget" className="text-sm font-semibold text-foreground">
+          Budget (USD) <span className="text-red-500">*</span>
+        </Label>
+        <Input
+          id="budget"
+          type="number"
+          placeholder="Enter amount"
+          value={formData.budget}
+          onChange={(e) => setFormData({ ...formData, budget: e.target.value })}
+          min="0"
+          step="0.01"
+          required
+          className="h-11"
+        />
+      </div>
+
+      <div className="space-y-2">
+        <Label className="text-sm font-semibold text-foreground">Estimated Duration</Label>
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            type="number"
+            placeholder="Duration"
+            value={formData.estimatedDuration}
+            onChange={(e) => setFormData({ ...formData, estimatedDuration: e.target.value })}
+            min="0"
+            className="h-11"
+          />
+          <Select
+            value={formData.durationUnit}
+            onValueChange={(value) => setFormData({ ...formData, durationUnit: value })}
+          >
+            <SelectTrigger className="h-11">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="hours">Hours</SelectItem>
+              <SelectItem value="days">Days</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="urgency" className="text-sm font-semibold text-foreground">
+          Urgency
+        </Label>
+        <Select value={formData.urgency} onValueChange={(value) => setFormData({ ...formData, urgency: value })}>
+          <SelectTrigger className="h-11">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="low">Low</SelectItem>
+            <SelectItem value="medium">Medium</SelectItem>
+            <SelectItem value="high">High</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="preferredDate" className="text-sm font-semibold text-foreground">
+          Preferred Start Date
+        </Label>
+        <Input
+          id="preferredDate"
+          type="date"
+          value={formData.preferredDate}
+          onChange={(e) => setFormData({ ...formData, preferredDate: e.target.value })}
+          className="h-11"
+        />
+      </div>
+
+      <div className="flex gap-3 pt-4">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onClose}
+          className="flex-1 h-11 border-border text-foreground hover:bg-muted bg-transparent"
+          disabled={isSubmitting}
+        >
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          className="flex-1 h-11 bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600 text-white"
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? "Submitting..." : "Submit Job Request"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+// ✅ FIXED: Properly render location object
 function JobCard({ id, title, description, skills, budget, location, postedDate, jobType }) {
+  // Handle location object safely
+  const locationText = typeof location === 'string' 
+    ? location 
+    : (location?.address || "Unknown");
+
   return (
     <div className="bg-card border border-border rounded-xl p-5 hover:border-blue-500 hover:shadow-lg transition-all duration-300">
       <div className="flex items-start justify-between mb-4">
@@ -132,14 +291,12 @@ function JobCard({ id, title, description, skills, budget, location, postedDate,
       </div>
 
       <div className="flex flex-wrap gap-2 mb-4">
-        {skills.slice(0, 2).map((skill) => (
+        {skills?.slice(0, 2).map((skill) => (
           <span key={skill} className="px-2.5 py-1 bg-blue-50 text-blue-700 text-xs rounded-full font-medium">
             {skill}
           </span>
         ))}
-        {skills.length > 2 && (
-          <span className="px-2.5 py-1 text-xs text-foreground/60">+{skills.length - 2} more</span>
-        )}
+        {skills?.length > 2 && <span className="px-2.5 py-1 text-xs text-foreground/60">+{skills.length - 2} more</span>}
       </div>
 
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-5 text-sm text-foreground/60 mb-5">
@@ -149,7 +306,7 @@ function JobCard({ id, title, description, skills, budget, location, postedDate,
         </div>
         <div className="flex items-center gap-1.5">
           <MapPin className="w-4 h-4 text-blue-600" />
-          <span>{location}</span>
+          <span>{locationText}</span> {/* ✅ FIXED */}
         </div>
         <div className="flex items-center gap-1.5">
           <Clock className="w-4 h-4 text-cyan-600" />
@@ -164,7 +321,6 @@ function JobCard({ id, title, description, skills, budget, location, postedDate,
   );
 }
 
-// FilterSidebar styled consistently
 function FilterSidebar({ onFiltersChange }) {
   const [selectedSkills, setSelectedSkills] = useState([]);
   const [selectedLocation, setSelectedLocation] = useState("");
@@ -177,18 +333,15 @@ function FilterSidebar({ onFiltersChange }) {
     onFiltersChange({
       skills: updated,
       location: selectedLocation,
-      priceRange: [0, 5000],
-      rating: 0,
     });
   };
 
   const handleLocationChange = (e) => {
-    setSelectedLocation(e.target.value);
+    const value = e.target.value;
+    setSelectedLocation(value);
     onFiltersChange({
       skills: selectedSkills,
-      location: e.target.value,
-      priceRange: [0, 5000],
-      rating: 0,
+      location: value,
     });
   };
 
@@ -228,12 +381,12 @@ function FilterSidebar({ onFiltersChange }) {
 
       <Button
         variant="outline"
-        className="w-full border-border text-foreground hover:bg-blue-50 hover:text-blue-700"
+        className="w-full border-border text-foreground hover:bg-blue-50 hover:text-blue-700 bg-transparent"
         size="sm"
         onClick={() => {
           setSelectedSkills([]);
           setSelectedLocation("");
-          onFiltersChange({ skills: [], location: "", priceRange: [0, 5000], rating: 0 });
+          onFiltersChange({ skills: [], location: "" });
         }}
       >
         Reset Filters
@@ -242,49 +395,106 @@ function FilterSidebar({ onFiltersChange }) {
   );
 }
 
-// Main JobsPage
 export default function JobsPage() {
   const [viewMode, setViewMode] = useState("grid");
   const [searchTerm, setSearchTerm] = useState("");
   const [filters, setFilters] = useState({
     skills: [],
     location: "",
-    priceRange: [0, 5000],
-    rating: 0,
   });
   const [currentPage, setCurrentPage] = useState(1);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [jobs, setJobs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [totalJobs, setTotalJobs] = useState(0);
   const jobsPerPage = 20;
 
-  const filteredJobs = mockJobs.filter((job) => {
-    const matchesSearch =
-      job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      job.description.toLowerCase().includes(searchTerm.toLowerCase());
+  const fetchJobs = async () => {
+    try {
+      setLoading(true);
+      const params = new URLSearchParams();
+      if (searchTerm.trim()) params.append("search", searchTerm.trim());
+      if (filters.location?.trim()) params.append("location", filters.location.trim());
+      if (filters.skills?.length) params.append("skills", filters.skills.join(","));
+      params.append("page", currentPage);
+      params.append("limit", jobsPerPage);
 
-    const matchesSkills =
-      filters.skills.length === 0 ||
-      filters.skills.some((skill) =>
-        job.skills.some((jobSkill) => jobSkill.toLowerCase().includes(skill.toLowerCase()))
-      );
+      const response = await api.get(`/jobs?${params.toString()}`);
+      const jobs = response.data.jobs || response.data;
+      const total = response.data.total || (Array.isArray(jobs) ? jobs.length : 0);
 
-    const matchesLocation = !filters.location || job.location.toLowerCase().includes(filters.location.toLowerCase());
+      setJobs(Array.isArray(jobs) ? jobs : []);
+      setTotalJobs(total);
+    } catch (error) {
+      console.error("Failed to fetch jobs:", error);
+      toast.error("Failed to load jobs.");
+      setJobs([]);
+      setTotalJobs(0);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    return matchesSearch && matchesSkills && matchesLocation;
-  });
+  useEffect(() => {
+    fetchJobs();
+  }, [searchTerm, filters, currentPage]);
 
-  const totalPages = Math.ceil(filteredJobs.length / jobsPerPage);
-  const paginatedJobs = filteredJobs.slice((currentPage - 1) * jobsPerPage, currentPage * jobsPerPage);
+  // Auto-log user from localStorage (dev only)
+  useEffect(() => {
+    const userStr = localStorage.getItem("user");
+    if (userStr) {
+      try {
+        const user = JSON.parse(userStr);
+        console.log("🎯 Current user from localStorage:", user);
+      } catch (e) {
+        console.warn("⚠️ Invalid user data in localStorage");
+      }
+    } else {
+      console.log("🚫 No user found in localStorage — not logged in");
+    }
+  }, []);
+
+  const handleJobCreated = () => {
+    setCurrentPage(1);
+    fetchJobs();
+  };
+
+  const totalPages = Math.ceil(totalJobs / jobsPerPage);
 
   return (
     <>
       <Toaster />
-      <Header variant="worker" />
+      <header className="bg-background border-b border-border py-4 px-6">
+        <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-green-500 bg-clip-text text-transparent">
+          Find Work
+        </h1>
+      </header>
+
       <main className="min-h-screen bg-background">
-        {/* Hero Section */}
         <div className="bg-card border-b border-border">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10">
-            <h1 className="text-3xl sm:text-4xl font-bold text-foreground mb-3">
-              Find Skilled Jobs Near You
-            </h1>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-3">
+              <h1 className="text-3xl sm:text-4xl font-bold text-foreground">Find Skilled Jobs Near You</h1>
+              <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button className="bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600 text-white h-11 px-6 whitespace-nowrap">
+                    <Plus className="w-4 h-4 mr-2" />
+                    Request Job
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-green-500 bg-clip-text text-transparent">
+                      Request a Job
+                    </DialogTitle>
+                    <DialogDescription className="text-foreground/70">
+                      Fill in the details below to post your job request. Fields marked with * are required.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <JobRequestForm onClose={() => setIsDialogOpen(false)} onJobCreated={handleJobCreated} />
+                </DialogContent>
+              </Dialog>
+            </div>
             <p className="text-foreground/70 mb-6 max-w-2xl">
               Browse thousands of job opportunities from clients looking for skilled professionals
             </p>
@@ -294,10 +504,7 @@ export default function JobsPage() {
                 type="text"
                 placeholder="Search job title, keywords..."
                 value={searchTerm}
-                onChange={(e) => {
-                  setSearchTerm(e.target.value);
-                  setCurrentPage(1);
-                }}
+                onChange={(e) => setSearchTerm(e.target.value)}
                 className="flex-1 h-12 text-base"
               />
               <Button className="h-12 px-6 bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600 text-white">
@@ -307,7 +514,6 @@ export default function JobsPage() {
           </div>
         </div>
 
-        {/* Main Content */}
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
           <div className="flex flex-col md:flex-row gap-8">
             <aside className="hidden md:block">
@@ -317,43 +523,50 @@ export default function JobsPage() {
             <div className="flex-1">
               <div className="flex items-center justify-between mb-6">
                 <div className="text-sm text-foreground/70">
-                  Showing <span className="font-semibold text-foreground">{paginatedJobs.length}</span> of{" "}
-                  <span className="font-semibold text-foreground">{filteredJobs.length}</span> jobs
+                  Showing <span className="font-semibold text-foreground">{jobs.length}</span> of{" "}
+                  <span className="font-semibold text-foreground">{totalJobs}</span> jobs
                 </div>
                 <div className="flex gap-2">
                   <button
                     onClick={() => setViewMode("grid")}
-                    className={`p-2.5 rounded-lg transition-colors ${
-                      viewMode === "grid"
-                        ? "bg-blue-600 text-white"
-                        : "bg-muted text-foreground/70 hover:bg-blue-50 hover:text-blue-600"
-                    }`}
+                    className={`p-2.5 rounded-lg transition-colors ${viewMode === "grid"
+                      ? "bg-blue-600 text-white"
+                      : "bg-muted text-foreground/70 hover:bg-blue-50 hover:text-blue-600"
+                      }`}
                   >
                     <LayoutGrid className="w-4.5 h-4.5" />
                   </button>
                   <button
                     onClick={() => setViewMode("list")}
-                    className={`p-2.5 rounded-lg transition-colors ${
-                      viewMode === "list"
-                        ? "bg-blue-600 text-white"
-                        : "bg-muted text-foreground/70 hover:bg-blue-50 hover:text-blue-600"
-                    }`}
+                    className={`p-2.5 rounded-lg transition-colors ${viewMode === "list"
+                      ? "bg-blue-600 text-white"
+                      : "bg-muted text-foreground/70 hover:bg-blue-50 hover:text-blue-600"
+                      }`}
                   >
                     <List className="w-4.5 h-4.5" />
                   </button>
                 </div>
               </div>
 
-              {paginatedJobs.length > 0 ? (
-                <div
-                  className={
-                    viewMode === "grid"
-                      ? "grid grid-cols-1 md:grid-cols-2 gap-6"
-                      : "flex flex-col gap-6"
-                  }
-                >
-                  {paginatedJobs.map((job) => (
-                    <JobCard key={job.id} {...job} />
+              {loading ? (
+                <div className="text-center py-16">
+                  <p className="text-foreground/70">Loading jobs...</p>
+                </div>
+              ) : jobs.length > 0 ? (
+                // ✅ FIXED: Added key={job.id}
+                <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 gap-6" : "flex flex-col gap-6"}>
+                  {jobs.map((job) => (
+                    <JobCard
+                      key={job.id} // ✅ REQUIRED
+                      id={job.id}
+                      title={job.title}
+                      description={job.description}
+                      skills={job.skills || []}
+                      budget={job.budget ? `$${job.budget}` : "N/A"}
+                      location={job.location} // Now safe to pass object
+                      postedDate={job.postedDate || new Date(job.createdAt).toLocaleString()}
+                      jobType={job.jobType || "Contract"}
+                    />
                   ))}
                 </div>
               ) : (
@@ -361,10 +574,10 @@ export default function JobsPage() {
                   <p className="text-foreground/70 mb-4">No jobs found matching your criteria</p>
                   <Button
                     variant="outline"
-                    className="border-border text-foreground hover:bg-blue-50 hover:text-blue-700"
+                    className="border-border text-foreground hover:bg-blue-50 hover:text-blue-700 bg-transparent"
                     onClick={() => {
                       setSearchTerm("");
-                      setFilters({ skills: [], location: "", priceRange: [0, 5000], rating: 0 });
+                      setFilters({ skills: [], location: "" });
                       setCurrentPage(1);
                     }}
                   >
@@ -373,11 +586,11 @@ export default function JobsPage() {
                 </div>
               )}
 
-              {filteredJobs.length > 0 && (
+              {!loading && totalJobs > jobsPerPage && (
                 <div className="flex items-center justify-center gap-2 mt-10">
                   <Button
                     variant="outline"
-                    className="border-border text-foreground hover:bg-blue-50"
+                    className="border-border text-foreground hover:bg-blue-50 bg-transparent"
                     onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
                     disabled={currentPage === 1}
                   >
@@ -401,7 +614,7 @@ export default function JobsPage() {
                     ))}
                   <Button
                     variant="outline"
-                    className="border-border text-foreground hover:bg-blue-50"
+                    className="border-border text-foreground hover:bg-blue-50 bg-transparent"
                     onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
                     disabled={currentPage === totalPages}
                   >

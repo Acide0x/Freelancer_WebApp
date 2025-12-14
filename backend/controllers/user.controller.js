@@ -218,12 +218,13 @@ exports.login = async (req, res) => {
       { expiresIn: process.env.JWT_EXPIRES_IN || "1d" }
     );
 
-    // Set token in HTTP-only cookie
+    // Set token in HTTP-only cookie (optional, can keep for security)
     res.cookie("token", token, cookieOptions);
 
-    // Send success response (password was already excluded in the token payload query)
+    // Send success response including the token
     res.json({
       message: "Login successful",
+      token, // <-- add this line
       user: {
         id: userWithPassword._id,
         fullName: userWithPassword.fullName,
@@ -231,7 +232,6 @@ exports.login = async (req, res) => {
         role: userWithPassword.role,
         phone: userWithPassword.phone,
         isActive: userWithPassword.isActive,
-        // Include provider details in response if the user is a provider
         ...(userWithPassword.role === 'provider' && {
           providerDetails: {
             bio: userWithPassword.providerDetails.bio,
@@ -244,6 +244,7 @@ exports.login = async (req, res) => {
         })
       },
     });
+
   } catch (error) {
     console.error("Login Error:", error);
     res.status(500).json({ message: "Server error during login. Please try again later." });

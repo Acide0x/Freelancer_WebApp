@@ -2,14 +2,14 @@ const mongoose = require("mongoose");
 
 const jobSchema = new mongoose.Schema(
   {
-    // 🔗 Who posted the job
+    // 🔗 Client who posted the job
     client: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
 
-    // 🛠️ Job basics
+    // 🛠️ Job details
     title: {
       type: String,
       required: true,
@@ -40,30 +40,29 @@ const jobSchema = new mongoose.Schema(
       ],
     },
 
-    // 📍 Location (important for local services)
+    // 📍 Location (local service focused)
     location: {
       address: { type: String, required: true },
-      city: { type: String },
-      latitude: { type: Number },
-      longitude: { type: Number },
+      city: String,
+      latitude: Number,
+      longitude: Number,
     },
 
-    // 💰 Budget
+    // 💰 Fixed price (escrow-based)
     budget: {
       type: Number,
       required: true,
       min: 0,
     },
 
-    paymentType: {
-      type: String,
-      enum: ["fixed", "hourly"],
-      default: "fixed",
-    },
-
-    // 📅 Schedule
-    preferredDate: {
-      type: Date,
+    // ⏱️ Estimated duration (recommended)
+    estimatedDuration: {
+      value: Number,
+      unit: {
+        type: String,
+        enum: ["hours", "days"],
+        default: "hours",
+      },
     },
 
     urgency: {
@@ -72,28 +71,54 @@ const jobSchema = new mongoose.Schema(
       default: "medium",
     },
 
-    // 👷 Assigned worker
+    preferredDate: Date,
+
+    // 👷 Worker assignment
     assignedWorker: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       default: null,
     },
 
-    // 📌 Job status
+    // 📌 Job lifecycle
     status: {
       type: String,
-      enum: ["open", "assigned", "in_progress", "completed", "cancelled"],
+      enum: [
+        "open",          // visible to workers
+        "assigned",      // worker selected, escrow pending
+        "escrow_funded", // money locked
+        "in_progress",
+        "completed",
+        "cancelled",
+        "disputed",
+      ],
       default: "open",
     },
 
-    // 📥 Applications from workers
+    // 🔐 Escrow system
+    escrow: {
+      amount: {
+        type: Number,
+        required: true,
+      },
+      funded: {
+        type: Boolean,
+        default: false,
+      },
+      fundedAt: Date,
+      releasedAt: Date,
+      refundedAt: Date,
+    },
+
+    // 📥 Worker applications
     applications: [
       {
         worker: {
           type: mongoose.Schema.Types.ObjectId,
           ref: "User",
+          required: true,
         },
-        proposedPrice: Number,
+        proposedPrice: Number, // can be same or negotiated
         message: String,
         appliedAt: {
           type: Date,
@@ -102,7 +127,19 @@ const jobSchema = new mongoose.Schema(
       },
     ],
 
-    // ⭐ Review after completion
+    // 👁️ Views counter (recommended)
+    views: {
+      type: Number,
+      default: 0,
+    },
+
+    // 🔕 Soft delete / visibility
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+
+    // ⭐ Review (after completion)
     review: {
       rating: {
         type: Number,
@@ -113,8 +150,18 @@ const jobSchema = new mongoose.Schema(
     },
   },
   {
-    timestamps: true, // createdAt, updatedAt
+    timestamps: true,
   }
 );
+
+/**
+ * 🚫 Prevent duplicate applications
+ * (enforced in controller logic)
+ */
+
+// Helpful indexes
+jobSchema.index({ category: 1, status: 1 });
+jobSchema.index({ "location.city": 1 });
+jobSchema.index({ createdAt: -1 });
 
 module.exports = mongoose.model("Job", jobSchema);
