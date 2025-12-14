@@ -5,20 +5,20 @@ const cors = require("cors");
 const cookieParser = require("cookie-parser");
 
 const userRoutes = require("./routes/user.route");
+const jobRoutes = require("./routes/job.route");
 
 const app = express();
 
-// Middleware
+// -------------------- Middleware --------------------
 app.use(express.json());
 app.use(cookieParser());
 
-// ✅ Secure CORS configuration
+// CORS
 const allowedOrigins = ["http://localhost:5173"];
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (e.g., mobile, curl, Postman)
       if (!origin) return callback(null, true);
       if (allowedOrigins.includes(origin)) {
         return callback(null, true);
@@ -31,7 +31,7 @@ app.use(
   })
 );
 
-// MongoDB connection (modern Mongoose v6+)
+// -------------------- MongoDB --------------------
 const connectDB = async () => {
   try {
     await mongoose.connect(process.env.MONGO_URI);
@@ -42,17 +42,18 @@ const connectDB = async () => {
   }
 };
 
-// Routes
+// -------------------- Routes --------------------
 app.use("/users", userRoutes);
+app.use("/jobs", jobRoutes);
 
-// Health check
+// -------------------- Health Check --------------------
 app.get("/", (req, res) => {
   res.send("✅ Backend is running!");
 });
 
+// -------------------- Server --------------------
 const PORT = process.env.PORT || 5000;
 
-// Start server after DB connection
 const startServer = async () => {
   await connectDB();
   app.listen(PORT, () => {
