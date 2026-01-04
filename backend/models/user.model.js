@@ -1,8 +1,8 @@
-// models/User.js
 const mongoose = require("mongoose");
 
 const userSchema = new mongoose.Schema(
   {
+    /* ================= BASIC INFO ================= */
     fullName: {
       type: String,
       required: true,
@@ -18,7 +18,7 @@ const userSchema = new mongoose.Schema(
     password: {
       type: String,
       required: true,
-      select: false, // 👈 Prevents password from being returned in queries by default
+      select: false,
     },
     role: {
       type: String,
@@ -26,10 +26,16 @@ const userSchema = new mongoose.Schema(
       default: "customer",
       required: true,
     },
-    phone: {
-      type: String,
+    phone: String,
+    avatar: String,
+
+    /* ================= KYC VERIFICATION (for all non-admin users) ================= */
+    kycVerified: {
+      type: Boolean,
+      default: false,
     },
-    // Location as GeoJSON Point (optional)
+
+    /* ================= LOCATION ================= */
     location: {
       type: {
         type: String,
@@ -37,59 +43,94 @@ const userSchema = new mongoose.Schema(
         default: "Point",
       },
       coordinates: {
-        type: [Number], // [longitude, latitude]
+        type: [Number], // [lng, lat]
         validate: {
-          validator: function (v) {
-            return !v || (Array.isArray(v) && v.length === 2);
-          },
-          message: "Coordinates must be an array of [longitude, latitude]",
+          validator: v => !v || v.length === 2,
+          message: "Coordinates must be [longitude, latitude]",
         },
       },
-      address: {
-        type: String,
-        trim: true,
-      },
+      address: String,
     },
-    avatar: {
-      type: String,
-    },
+
+    /* ================= PROVIDER DETAILS ================= */
     providerDetails: {
       bio: {
         type: String,
         maxlength: 500,
         trim: true,
       },
+
+      // ✅ UPDATED: skills now support proficiency + years
       skills: [{
-        type: String,
-        trim: true,
+        name: { type: String, trim: true, required: true },
+        proficiency: { 
+          type: Number, 
+          min: 0, 
+          max: 100, 
+          default: 50,
+          comment: "0-100% self-rated proficiency"
+        },
+        years: { 
+          type: Number, 
+          min: 0, 
+          default: 0,
+          comment: "Years of experience with this skill"
+        }
       }],
+
       certifications: [{
         title: String,
         issuingOrganization: String,
         issueDate: Date,
         certificateUrl: String,
       }],
-      hourlyRate: {
+
+      // ✅ RENAMED: hourlyRate → rate (supports hourly or base rate)
+      rate: {
         type: Number,
         min: 0,
+        comment: "Base/hourly rate in USD"
       },
+
       experienceYears: {
         type: Number,
         min: 0,
       },
+
+      /* 🔐 Trust & verification */
       isVerified: {
         type: Boolean,
         default: false,
       },
-      kycVerified: {
-        type: Boolean,
-        default: false,
+
+      /* 🟢 Availability */
+      availabilityStatus: {
+        type: String,
+        enum: ["available", "busy", "offline"],
+        default: "available",
       },
+
+      /* 👀 Visibility */
+      isProfilePublic: {
+        type: Boolean,
+        default: true,
+      },
+
+      /* 📊 Profile strength */
+      profileCompletion: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 100,
+      },
+
       portfolio: [{
         title: String,
         description: String,
         imageUrl: String,
       }],
+
+      // ✅ IMPROVED: serviceAreas now supports radius for coverage
       serviceAreas: [{
         type: {
           type: String,
@@ -98,15 +139,29 @@ const userSchema = new mongoose.Schema(
         },
         coordinates: {
           type: [Number],
-          validate: {
-            validator: function (v) {
-              return !v || (Array.isArray(v) && v.length === 2);
-            },
-          },
+          validate: v => !v || v.length === 2,
         },
         address: String,
+        // New: coverage radius in km
+        radiusKm: {
+          type: Number,
+          min: 0,
+          default: 10,
+          comment: "Service coverage radius in kilometers"
+        }
       }],
+
+      /* ================= VERIFICATION STATUS ================= */
+      verificationStatus: {
+        type: String,
+        enum: ["incomplete", "pending", "approved", "rejected"],
+        default: "incomplete",
+      },
+      rejectionReason: String,
+      submittedAt: Date,
     },
+
+    /* ================= CUSTOMER PREFERENCES ================= */
     customerPreferences: {
       favoriteProviders: [{
         type: mongoose.Schema.Types.ObjectId,
@@ -114,6 +169,8 @@ const userSchema = new mongoose.Schema(
       }],
       preferredCategories: [String],
     },
+
+    /* ================= RATINGS & REVIEWS ================= */
     ratings: {
       average: {
         type: Number,
@@ -126,6 +183,7 @@ const userSchema = new mongoose.Schema(
         default: 0,
       },
     },
+
     reviews: [{
       reviewerId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -133,7 +191,6 @@ const userSchema = new mongoose.Schema(
       },
       rating: {
         type: Number,
-        required: true,
         min: 1,
         max: 5,
       },
@@ -143,19 +200,44 @@ const userSchema = new mongoose.Schema(
         default: Date.now,
       },
     }],
+
+    /* ================= SECURITY ================= */
     isActive: {
       type: Boolean,
       default: true,
     },
-    isEmailVerified: {
-      type: Boolean,
-      default: false,
-    },
-    adminNotes: String,
     isSuspended: {
       type: Boolean,
       default: false,
     },
+
+    lastLoginAt: Date,
+    loginAttempts: {
+      type: Number,
+      default: 0,
+    },
+    lockUntil: Date,
+
+    /* ================= EMAIL & PASSWORD ================= */
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+    emailVerificationToken: String,
+    emailVerificationExpires: Date,
+
+    passwordResetToken: String,
+    passwordResetExpires: Date,
+
+    /* ================= MODERATION ================= */
+    reportCount: {
+      type: Number,
+      default: 0,
+    },
+    adminNotes: String,
+
+    /* ================= SOFT DELETE ================= */
+    deletedAt: Date,
   },
   {
     timestamps: true,
@@ -163,25 +245,31 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// Indexes
+/* ================= INDEXES ================= */
 userSchema.index({ role: 1 });
-userSchema.index({ "location": "2dsphere" });
-userSchema.index({ "providerDetails.skills": 1 });
+userSchema.index({ location: "2dsphere" });
+userSchema.index({ "providerDetails.skills.name": 1 }); // ✅ Index skill names for search
 userSchema.index({ "providerDetails.isVerified": 1 });
 userSchema.index({ "ratings.average": -1 });
+userSchema.index({ kycVerified: 1 }); // ✅ Index for filtering verified users
+userSchema.index({ deletedAt: 1 });
 
-// Ensure password is always removed in JSON output (extra safety)
+/* ================= OUTPUT SANITIZATION ================= */
 userSchema.set("toJSON", {
-  transform: function (doc, ret) {
+  transform: (doc, ret) => {
     delete ret.password;
+    delete ret.passwordResetToken;
+    delete ret.emailVerificationToken;
     return ret;
   },
   virtuals: true,
 });
 
 userSchema.set("toObject", {
-  transform: function (doc, ret) {
+  transform: (doc, ret) => {
     delete ret.password;
+    delete ret.passwordResetToken;
+    delete ret.emailVerificationToken;
     return ret;
   },
   virtuals: true,
