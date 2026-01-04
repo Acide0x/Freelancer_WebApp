@@ -77,6 +77,7 @@ export default function Navbar() {
       navigate("/login", { replace: true });
     }
   };
+  console.log("Saved user:", user);
 
   return (
     <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-md border-b border-border">
