@@ -13,7 +13,7 @@ import {
   ChevronRight,
   Plus,
   Trash2,
-  MapPin, // ✅ Added missing import
+  MapPin,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,9 +65,29 @@ const defaultOnboardingData = {
   experienceYears: 6,
 };
 
-export default function OnboardingTab({ providerStatus, onStatusChange, onboardingData, onUpdateOnboardingData }) {
+// 🔒 Helper to safely merge incoming data with defaults
+const mergeWithDefaults = (incomingData) => {
+  return {
+    ...defaultOnboardingData,
+    ...(incomingData || {}),
+    skills: incomingData?.skills ?? defaultOnboardingData.skills,
+    fixedRateProjects:
+      incomingData?.fixedRateProjects ?? defaultOnboardingData.fixedRateProjects,
+    portfolios: incomingData?.portfolios ?? defaultOnboardingData.portfolios,
+    serviceAreas: incomingData?.serviceAreas ?? defaultOnboardingData.serviceAreas,
+  };
+};
+
+export default function OnboardingTab({
+  providerStatus,
+  onStatusChange,
+  onboardingData,
+  onUpdateOnboardingData,
+}) {
   const [currentStep, setCurrentStep] = useState(0);
-  const [localOnboardingData, setLocalOnboardingData] = useState(onboardingData || defaultOnboardingData);
+  const [localOnboardingData, setLocalOnboardingData] = useState(
+    mergeWithDefaults(onboardingData)
+  );
 
   const nextStep = () =>
     setCurrentStep((s) => Math.min(s + 1, ONBOARDING_STEPS.length - 1));
@@ -86,107 +106,113 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
     }
   };
 
-  const renderSkillsStep = () => (
-    <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
-      <div className="space-y-2">
-        <h2 className="text-3xl font-black tracking-tighter uppercase italic">
-          Expertise & Proficiency
-        </h2>
-        <p className="text-gray-500 font-medium">
-          Rate your skills on a scale of 1-10 and specify your experience.
-        </p>
-      </div>
-      <div className="space-y-6">
-        {localOnboardingData.skills.map((skill, idx) => (
-          <Card
-            key={idx}
-            className="bg-gray-50 border-gray-200 p-6 rounded-2xl space-y-6"
-          >
-            <div className="flex items-center justify-between gap-4">
-              <Input
-                value={skill.name}
-                onChange={(e) => {
-                  const newSkills = [...localOnboardingData.skills];
-                  newSkills[idx].name = e.target.value;
-                  updateLocalData({ skills: newSkills });
-                }}
-                placeholder="Skill Name (e.g. Electrical)"
-                className="bg-transparent border-none text-xl font-black p-0 h-auto focus-visible:ring-0 placeholder:text-gray-300"
-              />
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => {
-                  const newSkills = localOnboardingData.skills.filter(
-                    (_, i) => i !== idx
-                  );
-                  updateLocalData({ skills: newSkills });
-                }}
-                className="text-gray-400 hover:text-red-500 transition-colors"
-              >
-                <Trash2 className="w-4 h-4" />
-              </Button>
-            </div>
-            <div className="grid md:grid-cols-2 gap-12">
-              <div className="space-y-4">
-                <div className="flex justify-between items-end">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
-                    Proficiency (1-10)
-                  </label>
-                  <span className="text-xl font-black italic">
-                    {skill.proficiency}/10
-                  </span>
-                </div>
-                <Slider
-                  value={[skill.proficiency]}
-                  max={10}
-                  min={1}
-                  step={1}
-                  onValueChange={([val]) => {
-                    const newSkills = [...localOnboardingData.skills];
-                    newSkills[idx].proficiency = val;
+  const renderSkillsStep = () => {
+    // ✅ Defensive fallback
+    const skills = localOnboardingData.skills || [];
+    return (
+      <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
+        <div className="space-y-2">
+          <h2 className="text-3xl font-black tracking-tighter uppercase italic">
+            Expertise & Proficiency
+          </h2>
+          <p className="text-gray-500 font-medium">
+            Rate your skills on a scale of 1-10 and specify your experience.
+          </p>
+        </div>
+        <div className="space-y-6">
+          {skills.map((skill, idx) => (
+            <Card
+              key={idx}
+              className="bg-gray-50 border-gray-200 p-6 rounded-2xl space-y-6"
+            >
+              <div className="flex items-center justify-between gap-4">
+                <Input
+                  value={skill.name}
+                  onChange={(e) => {
+                    const newSkills = [...skills];
+                    newSkills[idx].name = e.target.value;
                     updateLocalData({ skills: newSkills });
                   }}
-                  className="py-4"
+                  placeholder="Skill Name (e.g. Electrical)"
+                  className="bg-transparent border-none text-xl font-black p-0 h-auto focus-visible:ring-0 placeholder:text-gray-300"
                 />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => {
+                    const newSkills = skills.filter((_, i) => i !== idx);
+                    updateLocalData({ skills: newSkills });
+                  }}
+                  className="text-gray-400 hover:text-red-500 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </Button>
               </div>
-              <div className="space-y-4">
-                <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
-                  Years Active
-                </label>
-                <div className="flex items-center gap-4">
-                  <Input
-                    type="number"
-                    value={skill.years}
-                    onChange={(e) => {
-                      const newSkills = [...localOnboardingData.skills];
-                      newSkills[idx].years = Number.parseInt(e.target.value) || 0;
+              <div className="grid md:grid-cols-2 gap-12">
+                <div className="space-y-4">
+                  <div className="flex justify-between items-end">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+                      Proficiency (1-10)
+                    </label>
+                    <span className="text-xl font-black italic">
+                      {skill.proficiency}/10
+                    </span>
+                  </div>
+                  <Slider
+                    value={[skill.proficiency]}
+                    max={10}
+                    min={1}
+                    step={1}
+                    onValueChange={([val]) => {
+                      const newSkills = [...skills];
+                      newSkills[idx].proficiency = val;
                       updateLocalData({ skills: newSkills });
                     }}
-                    className="bg-gray-100 border-gray-200 h-12 w-24 rounded-xl font-black text-center"
+                    className="py-4"
                   />
-                  <span className="text-sm font-bold text-gray-500">
-                    Professional experience
-                  </span>
+                </div>
+                <div className="space-y-4">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+                    Years Active
+                  </label>
+                  <div className="flex items-center gap-4">
+                    <Input
+                      type="number"
+                      value={skill.years}
+                      onChange={(e) => {
+                        const newSkills = [...skills];
+                        newSkills[idx].years =
+                          Number.parseInt(e.target.value) || 0;
+                        updateLocalData({ skills: newSkills });
+                      }}
+                      className="bg-gray-100 border-gray-200 h-12 w-24 rounded-xl font-black text-center"
+                    />
+                    <span className="text-sm font-bold text-gray-500">
+                      Professional experience
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
-          </Card>
-        ))}
-        <Button
-          variant="outline"
-          onClick={() =>
-            updateLocalData({
-              skills: [...localOnboardingData.skills, { name: "", proficiency: 5, years: 0 }],
-            })
-          }
-          className="w-full h-14 border-dashed border-gray-200 bg-transparent hover:bg-gray-100 hover:border-gray-300 rounded-2xl font-black uppercase tracking-widest text-[10px]"
-        >
-          <Plus className="w-4 h-4 mr-2" /> Add Skill
-        </Button>
+            </Card>
+          ))}
+          <Button
+            variant="outline"
+            onClick={() =>
+              updateLocalData({
+                skills: [
+                  ...skills,
+                  { name: "", proficiency: 5, years: 0 },
+                ],
+              })
+            }
+            className="w-full h-14 border-dashed border-gray-200 bg-transparent hover:bg-gray-100 hover:border-gray-300 rounded-2xl font-black uppercase tracking-widest text-[10px]"
+          >
+            <Plus className="w-4 h-4 mr-2" /> Add Skill
+          </Button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   if (providerStatus === "pending") {
     return (
@@ -223,6 +249,9 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
       </Card>
     );
   }
+
+  // ✅ Ensure data integrity for all steps
+  const data = localOnboardingData;
 
   return (
     <div className="max-w-4xl mx-auto space-y-12">
@@ -269,10 +298,8 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                     Professional Headline
                   </label>
                   <Input
-                    value={localOnboardingData.headline}
-                    onChange={(e) =>
-                      updateLocalData({ headline: e.target.value })
-                    }
+                    value={data.headline}
+                    onChange={(e) => updateLocalData({ headline: e.target.value })}
                     placeholder="e.g. Master Plumber with 15 years experience"
                     className="bg-gray-100 border-gray-200 h-14 rounded-xl"
                   />
@@ -282,7 +309,7 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                     Experience Bio
                   </label>
                   <Textarea
-                    value={localOnboardingData.bio}
+                    value={data.bio}
                     onChange={(e) => updateLocalData({ bio: e.target.value })}
                     placeholder="Describe your background and expertise..."
                     className="bg-gray-100 border-gray-200 min-h-[180px] rounded-xl"
@@ -313,7 +340,7 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                     <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                     <Input
                       type="number"
-                      value={localOnboardingData.rate}
+                      value={data.rate}
                       onChange={(e) =>
                         updateLocalData({ rate: Number(e.target.value) })
                       }
@@ -329,11 +356,9 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                     <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                     <Input
                       type="number"
-                      value={localOnboardingData.minCallOutFee}
+                      value={data.minCallOutFee}
                       onChange={(e) =>
-                        updateLocalData({
-                          minCallOutFee: Number(e.target.value),
-                        })
+                        updateLocalData({ minCallOutFee: Number(e.target.value) })
                       }
                       className="pl-9 bg-gray-100 border-none h-12 text-xl font-black rounded-xl"
                     />
@@ -347,11 +372,9 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                     <Navigation className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                     <Input
                       type="number"
-                      value={localOnboardingData.travelFeePerKm}
+                      value={data.travelFeePerKm}
                       onChange={(e) =>
-                        updateLocalData({
-                          travelFeePerKm: Number(e.target.value),
-                        })
+                        updateLocalData({ travelFeePerKm: Number(e.target.value) })
                       }
                       className="pl-9 bg-gray-100 border-none h-12 text-xl font-black rounded-xl"
                     />
@@ -360,11 +383,9 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                     <span>Beyond</span>
                     <Input
                       type="number"
-                      value={localOnboardingData.travelThresholdKm}
+                      value={data.travelThresholdKm}
                       onChange={(e) =>
-                        updateLocalData({
-                          travelThresholdKm: Number(e.target.value),
-                        })
+                        updateLocalData({ travelThresholdKm: Number(e.target.value) })
                       }
                       className="w-10 h-5 bg-gray-100 border-none p-1 text-center"
                     />
@@ -377,7 +398,7 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                 <h3 className="text-xs font-black uppercase tracking-[0.2em] text-gray-500">
                   Fixed-Rate Projects
                 </h3>
-                {localOnboardingData.fixedRateProjects.map((project, idx) => (
+                {(data.fixedRateProjects || []).map((project, idx) => (
                   <Card
                     key={idx}
                     className="bg-gray-50 border-gray-200 p-6 rounded-2xl space-y-4"
@@ -386,7 +407,7 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                       <Input
                         value={project.name}
                         onChange={(e) => {
-                          const newProjects = [...localOnboardingData.fixedRateProjects];
+                          const newProjects = [...(data.fixedRateProjects || [])];
                           newProjects[idx].name = e.target.value;
                           updateLocalData({ fixedRateProjects: newProjects });
                         }}
@@ -397,7 +418,7 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                         variant="ghost"
                         size="icon"
                         onClick={() => {
-                          const newProjects = localOnboardingData.fixedRateProjects.filter(
+                          const newProjects = (data.fixedRateProjects || []).filter(
                             (_, i) => i !== idx
                           );
                           updateLocalData({ fixedRateProjects: newProjects });
@@ -411,7 +432,7 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                       <Textarea
                         value={project.details}
                         onChange={(e) => {
-                          const newProjects = [...localOnboardingData.fixedRateProjects];
+                          const newProjects = [...(data.fixedRateProjects || [])];
                           newProjects[idx].details = e.target.value;
                           updateLocalData({ fixedRateProjects: newProjects });
                         }}
@@ -426,7 +447,7 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                           type="number"
                           value={project.rate}
                           onChange={(e) => {
-                            const newProjects = [...localOnboardingData.fixedRateProjects];
+                            const newProjects = [...(data.fixedRateProjects || [])];
                             newProjects[idx].rate = Number(e.target.value);
                             updateLocalData({ fixedRateProjects: newProjects });
                           }}
@@ -441,7 +462,7 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                   onClick={() =>
                     updateLocalData({
                       fixedRateProjects: [
-                        ...localOnboardingData.fixedRateProjects,
+                        ...(data.fixedRateProjects || []),
                         { name: "", details: "", rate: 0 },
                       ],
                     })
@@ -478,7 +499,7 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                   onClick={() =>
                     updateLocalData({
                       portfolios: [
-                        ...localOnboardingData.portfolios,
+                        ...(data.portfolios || []),
                         { title: "", description: "", images: [] },
                       ],
                     })
@@ -489,7 +510,7 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                 </Button>
               </div>
               <div className="space-y-8">
-                {localOnboardingData.portfolios.map((project, pIdx) => (
+                {(data.portfolios || []).map((project, pIdx) => (
                   <Card
                     key={pIdx}
                     className="bg-gray-50 border-gray-200 p-8 rounded-3xl space-y-6"
@@ -499,7 +520,7 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                         <Input
                           value={project.title}
                           onChange={(e) => {
-                            const newPortfolios = [...localOnboardingData.portfolios];
+                            const newPortfolios = [...(data.portfolios || [])];
                             newPortfolios[pIdx].title = e.target.value;
                             updateLocalData({ portfolios: newPortfolios });
                           }}
@@ -509,7 +530,7 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                         <Textarea
                           value={project.description}
                           onChange={(e) => {
-                            const newPortfolios = [...localOnboardingData.portfolios];
+                            const newPortfolios = [...(data.portfolios || [])];
                             newPortfolios[pIdx].description = e.target.value;
                             updateLocalData({ portfolios: newPortfolios });
                           }}
@@ -521,7 +542,7 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                         variant="ghost"
                         size="icon"
                         onClick={() => {
-                          const newPortfolios = localOnboardingData.portfolios.filter(
+                          const newPortfolios = (data.portfolios || []).filter(
                             (_, i) => i !== pIdx
                           );
                           updateLocalData({ portfolios: newPortfolios });
@@ -550,10 +571,11 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                             />
                             <button
                               onClick={() => {
-                                const newPortfolios = [...localOnboardingData.portfolios];
-                                newPortfolios[pIdx].images = newPortfolios[pIdx].images.filter(
-                                  (_, i) => i !== iIdx
-                                );
+                                const newPortfolios = [...(data.portfolios || [])];
+                                newPortfolios[pIdx].images =
+                                  newPortfolios[pIdx].images.filter(
+                                    (_, i) => i !== iIdx
+                                  );
                                 updateLocalData({ portfolios: newPortfolios });
                               }}
                               className="absolute top-2 right-2 p-1.5 bg-black/10 text-gray-800 opacity-0 group-hover:opacity-100 rounded-lg transition-opacity"
@@ -573,11 +595,11 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                               onChange={(e) => {
                                 const files = Array.from(e.target.files || []);
                                 if (files.length > 0) {
-                                  const newPortfolios = [...localOnboardingData.portfolios];
+                                  const newPortfolios = [...(data.portfolios || [])];
                                   const remainingSlots = 10 - project.images.length;
                                   const imagesToAdd = files
                                     .slice(0, remainingSlots)
-                                    .map(() => URL.createObjectURL(files[0])); // ✅ Use real preview
+                                    .map((file) => URL.createObjectURL(file)); // ✅ Fixed: use each file
                                   newPortfolios[pIdx].images = [
                                     ...newPortfolios[pIdx].images,
                                     ...imagesToAdd,
@@ -610,9 +632,9 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                     <div className="relative">
                       <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                       <Input
-                        value={localOnboardingData.serviceAreas?.[0]?.address || ""}
+                        value={(data.serviceAreas?.[0]?.address) || ""}
                         onChange={(e) => {
-                          const newServiceAreas = [...(localOnboardingData.serviceAreas || [])];
+                          const newServiceAreas = [...(data.serviceAreas || [])];
                           newServiceAreas[0] = {
                             ...(newServiceAreas[0] || {}),
                             address: e.target.value,
@@ -630,16 +652,16 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                         Service Radius
                       </label>
                       <span className="text-2xl font-black italic">
-                        {localOnboardingData.serviceAreas?.[0]?.radiusKm || 0} km
+                        {(data.serviceAreas?.[0]?.radiusKm) || 0} km
                       </span>
                     </div>
                     <Slider
-                      value={[localOnboardingData.serviceAreas?.[0]?.radiusKm || 5]}
+                      value={[(data.serviceAreas?.[0]?.radiusKm) || 5]}
                       max={200}
                       min={5}
                       step={5}
                       onValueChange={([val]) => {
-                        const newServiceAreas = [...(localOnboardingData.serviceAreas || [])];
+                        const newServiceAreas = [...(data.serviceAreas || [])];
                         newServiceAreas[0] = {
                           ...(newServiceAreas[0] || { coordinates: [] }),
                           radiusKm: val,
@@ -695,10 +717,10 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                   </h3>
                   <div className="p-6 bg-gray-50 border border-gray-200 rounded-2xl space-y-4">
                     <p className="text-2xl font-black italic tracking-tighter">
-                      {localOnboardingData.headline || "Unspecified Headline"}
+                      {data.headline || "Unspecified Headline"}
                     </p>
                     <p className="text-sm text-gray-600 leading-relaxed font-medium">
-                      {localOnboardingData.bio || "No professional bio provided."}
+                      {data.bio || "No professional bio provided."}
                     </p>
                   </div>
                 </section>
@@ -707,7 +729,7 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                     2. Technical Skills
                   </h3>
                   <div className="grid gap-3">
-                    {localOnboardingData.skills.map((skill, i) => (
+                    {(data.skills || []).map((skill, i) => (
                       <div
                         key={i}
                         className="flex items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-xl"
@@ -732,20 +754,20 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                   <div className="grid md:grid-cols-3 gap-4">
                     <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
                       <p className="text-[8px] font-black text-gray-400 uppercase">Hourly Rate</p>
-                      <p className="text-lg font-black">${localOnboardingData.rate}/hr</p>
+                      <p className="text-lg font-black">${data.rate}/hr</p>
                     </div>
                     <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
                       <p className="text-[8px] font-black text-gray-400 uppercase">Call-out</p>
-                      <p className="text-lg font-black">${localOnboardingData.minCallOutFee}</p>
+                      <p className="text-lg font-black">${data.minCallOutFee}</p>
                     </div>
                     <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
                       <p className="text-[8px] font-black text-gray-400 uppercase">Travel Fee</p>
-                      <p className="text-lg font-black">${localOnboardingData.travelFeePerKm}/km</p>
+                      <p className="text-lg font-black">${data.travelFeePerKm}/km</p>
                     </div>
                   </div>
                   <div className="space-y-3">
                     <p className="text-[8px] font-black text-gray-400 uppercase">Fixed Projects</p>
-                    {localOnboardingData.fixedRateProjects.map((p, i) => (
+                    {(data.fixedRateProjects || []).map((p, i) => (
                       <div
                         key={i}
                         className="p-4 bg-gray-50 border border-gray-200 rounded-xl flex justify-between items-center"
@@ -764,7 +786,7 @@ export default function OnboardingTab({ providerStatus, onStatusChange, onboardi
                     4. Portfolio Showcase
                   </h3>
                   <div className="space-y-4">
-                    {localOnboardingData.portfolios.map((p, i) => (
+                    {(data.portfolios || []).map((p, i) => (
                       <div
                         key={i}
                         className="p-4 bg-gray-50 border border-gray-200 rounded-xl space-y-3"
