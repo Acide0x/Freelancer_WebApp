@@ -1,62 +1,122 @@
 // src/pages/ProfilePage.jsx
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { LogOut, ShieldCheck } from "lucide-react";
+import { LogOut } from "lucide-react";
 
 // ✅ IMPORT SPLIT TABS
 import ProfileTab from "@/components/MyProfile/ProfileTab";
 import OnboardingTab from "@/components/MyProfile/OnboardingTab";
 import SecurityTab from "@/components/MyProfile/SecurityTab";
 
-const defaultProfile = {
-  fullName: "Alex Johnson",
-  email: "alex@example.com",
-  phone: "+1 (555) 123-4567",
-  avatar: "/diverse-user-avatars.png",
-  role: "provider",
-  kycVerified: true,
-  location: {
-    address: "San Francisco, CA",
-    coordinates: [-122.4194, 37.7749],
-  },
+// Helper to safely get user from localStorage
+const getUserFromStorage = () => {
+  const userStr = localStorage.getItem("user");
+  if (userStr) {
+    try {
+      return JSON.parse(userStr);
+    } catch (e) {
+      console.error("Failed to parse user from localStorage", e);
+      toast.error("Session corrupted. Please log in again.");
+    }
+  }
+  return null;
 };
 
-// Default onboarding structure — adjust based on your actual fields
-const defaultOnboardingData = {
-  businessName: "",
-  licenseNumber: "",
-  serviceAreas: [],
-  taxId: "",
-  bankAccount: "",
+// ✅ Extract FULL providerDetails for onboarding (aligned with backend)
+const getOnboardingDataFromUser = (user) => {
+  if (!user || user.role !== "provider") {
+    // Return empty but valid structure so OnboardingTab doesn't crash
+    return {
+      headline: "",
+      workDescription: "",
+      skills: [],
+      rate: 50,
+      minCallOutFee: 30,
+      travelFeePerKm: 2,
+      travelThresholdKm: 15,
+      fixedRateProjects: [],
+      availabilityStatus: "available",
+      portfolios: [],
+      serviceAreas: [],
+      experienceYears: 0,
+      verificationStatus: "incomplete",
+    };
+  }
+
+  const pd = user.providerDetails || {};
+  return {
+    headline: pd.headline || "",
+    workDescription: pd.workDescription || "",
+    skills: Array.isArray(pd.skills) ? pd.skills : [],
+    rate: pd.rate || 50,
+    minCallOutFee: pd.minCallOutFee || 30,
+    travelFeePerKm: pd.travelFeePerKm || 2,
+    travelThresholdKm: pd.travelThresholdKm || 15,
+    fixedRateProjects: Array.isArray(pd.fixedRateProjects) ? pd.fixedRateProjects : [],
+    availabilityStatus: pd.availabilityStatus || "available",
+    portfolios: Array.isArray(pd.portfolios) ? pd.portfolios : [],
+    serviceAreas: Array.isArray(pd.serviceAreas) ? pd.serviceAreas : [],
+    experienceYears: pd.experienceYears || 0,
+    verificationStatus: pd.verificationStatus || "incomplete",
+  };
 };
 
 export default function ProfilePage() {
   const navigate = useNavigate();
-  const [profile, setProfile] = useState(defaultProfile);
-  const [onboardingData, setOnboardingData] = useState(defaultOnboardingData);
 
-  // ✅ Derive provider status from onboarding data completeness
-  const providerStatus = React.useMemo(() => {
-    const requiredFields = ["businessName", "licenseNumber", "taxId"];
-    const isComplete = requiredFields.every(
-      (field) => onboardingData[field]?.trim() !== ""
-    );
-    return isComplete ? "complete" : "incomplete";
-  }, [onboardingData]);
+  const [profile, setProfile] = useState(null);
+  const [onboardingData, setOnboardingData] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  // ✅ Secure logout: clear auth state + navigate
   const handleLogout = useCallback(() => {
-    // Clear authentication state (adjust based on your setup)
-    localStorage.removeItem("token"); // or sessionStorage, cookies, etc.
-    // If using auth context: authContext.logout()
-
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
     navigate("/login", { replace: true });
     toast.success("Logged out successfully");
   }, [navigate]);
+
+  useEffect(() => {
+    const user = getUserFromStorage();
+    if (!user) {
+      toast.error("Please log in to access your profile.");
+      navigate("/login", { replace: true });
+      return;
+    }
+
+    // Normalize profile for ProfileTab
+    const normalizedProfile = {
+      _id: user._id || user.id,
+      fullName: user.fullName || "",
+      email: user.email || "",
+      phone: user.phone || "",
+      avatar: user.avatar || "/placeholder.svg",
+      role: user.role || "customer",
+      kycVerified: user.kycVerified || false,
+      location: user.location || { address: "Not specified" },
+      bio: user.bio || "", // universal bio
+      joinDate: user.createdAt
+        ? new Date(user.createdAt).toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "long",
+          })
+        : "Unknown",
+    };
+
+    setProfile(normalizedProfile);
+    setOnboardingData(getOnboardingDataFromUser(user));
+    setLoading(false);
+  }, [navigate]);
+
+  if (loading || !profile || !onboardingData) {
+    return (
+      <main className="min-h-screen bg-white flex items-center justify-center">
+        <p className="text-gray-500">Loading your profile...</p>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-white text-gray-900 font-sans selection:bg-gray-200 pb-20">
@@ -106,10 +166,10 @@ export default function ProfilePage() {
           {profile.role === "provider" && (
             <TabsContent value="provider" className="m-0 focus-visible:ring-0">
               <OnboardingTab
-                providerStatus={providerStatus}
+                providerStatus={onboardingData.verificationStatus}
                 onboardingData={onboardingData}
-                onUpdateOnboardingData={setOnboardingData}
-                // Note: onStatusChange removed since status is now derived
+                // ❌ NO onUpdateOnboardingData or onStatusChange props passed
+                // All saving logic is now inside OnboardingTab
               />
             </TabsContent>
           )}

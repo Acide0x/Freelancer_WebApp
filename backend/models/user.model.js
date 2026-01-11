@@ -29,6 +29,13 @@ const userSchema = new mongoose.Schema(
     phone: String,
     avatar: String,
 
+    // UNIVERSAL BIO — for any user (customer, provider, admin)
+    bio: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+    },
+
     /* ================= KYC VERIFICATION (for all non-admin users) ================= */
     kycVerified: {
       type: Boolean,
@@ -54,104 +61,159 @@ const userSchema = new mongoose.Schema(
 
     /* ================= PROVIDER DETAILS ================= */
     providerDetails: {
-      bio: {
+      // === Professional Headline (Step 1) ===
+      headline: {
         type: String,
-        maxlength: 500,
         trim: true,
+        maxlength: 120,
       },
 
-      // ✅ UPDATED: skills now support proficiency + years
+      // WORK-FOCUSED DESCRIPTION (replaces old 'bio' in provider context)
+      workDescription: {
+        type: String,
+        trim: true,
+        maxlength: 500,
+        comment: "Professional summary of services, expertise, and value proposition"
+      },
+
+      // === Skills Section (Step 2) ===
       skills: [{
-        name: { type: String, trim: true, required: true },
-        proficiency: { 
-          type: Number, 
-          min: 0, 
-          max: 100, 
-          default: 50,
-          comment: "0-100% self-rated proficiency"
+        name: {
+          type: String,
+          trim: true,
+          required: true,
+          maxlength: 50,
         },
-        years: { 
-          type: Number, 
-          min: 0, 
+        proficiency: {
+          type: Number,
+          min: 1,
+          max: 10,
+          default: 5,
+          comment: "Self-rated proficiency on a 1–10 scale (matches UI slider)"
+        },
+        years: {
+          type: Number,
+          min: 0,
           default: 0,
-          comment: "Years of experience with this skill"
+          comment: "Years of professional experience with this skill"
         }
       }],
 
-      certifications: [{
-        title: String,
-        issuingOrganization: String,
-        issueDate: Date,
-        certificateUrl: String,
-      }],
-
-      // ✅ RENAMED: hourlyRate → rate (supports hourly or base rate)
+      // === Rates & Terms (Step 3) ===
       rate: {
         type: Number,
         min: 0,
-        comment: "Base/hourly rate in USD"
+        default: 50,
+        comment: "Hourly rate in USD"
       },
-
-      experienceYears: {
+      minCallOutFee: {
         type: Number,
         min: 0,
+        default: 30,
+        comment: "Minimum fee charged per service call"
       },
-
-      /* 🔐 Trust & verification */
-      isVerified: {
-        type: Boolean,
-        default: false,
+      travelFeePerKm: {
+        type: Number,
+        min: 0,
+        default: 2,
+        comment: "Additional fee per kilometer beyond threshold"
       },
+      travelThresholdKm: {
+        type: Number,
+        min: 0,
+        default: 15,
+        comment: "Free travel distance (km); fees apply beyond this"
+      },
+      fixedRateProjects: [{
+        name: {
+          type: String,
+          trim: true,
+          maxlength: 100,
+        },
+        details: {
+          type: String,
+          trim: true,
+          maxlength: 300,
+        },
+        rate: {
+          type: Number,
+          min: 0,
+        }
+      }],
 
-      /* 🟢 Availability */
+      // === Availability Status ===
       availabilityStatus: {
         type: String,
         enum: ["available", "busy", "offline"],
         default: "available",
       },
 
-      /* 👀 Visibility */
+      // === Portfolio (Step 4) ===
+      portfolios: [{
+        title: {
+          type: String,
+          trim: true,
+          maxlength: 100,
+        },
+        description: {
+          type: String,
+          trim: true,
+          maxlength: 500,
+        },
+        images: [{
+          type: String, // Array of image URLs
+          validate: {
+            validator: function (v) {
+              return !v || v.length <= 10;
+            },
+            message: 'A portfolio item can have at most 10 images'
+          }
+        }]
+      }],
+
+      // === Service Area (Step 5) ===
+      serviceAreas: [{
+        address: {
+          type: String,
+          trim: true,
+          required: true,
+        },
+        radiusKm: {
+          type: Number,
+          min: 5,
+          max: 200,
+          default: 25,
+          comment: "Service coverage radius in kilometers from base address"
+        },
+        coordinates: {
+          type: [Number], // [longitude, latitude]
+          validate: {
+            validator: function (v) {
+              return !v || (Array.isArray(v) && v.length === 2);
+            },
+            message: 'Coordinates must be an array of [longitude, latitude]'
+          }
+        }
+      }],
+
+      // === General Experience ===
+      experienceYears: {
+        type: Number,
+        min: 0,
+        default: 0,
+      },
+
+      // === Visibility & Trust ===
+      isVerified: {
+        type: Boolean,
+        default: false,
+      },
       isProfilePublic: {
         type: Boolean,
         default: true,
       },
 
-      /* 📊 Profile strength */
-      profileCompletion: {
-        type: Number,
-        default: 0,
-        min: 0,
-        max: 100,
-      },
-
-      portfolio: [{
-        title: String,
-        description: String,
-        imageUrl: String,
-      }],
-
-      // ✅ IMPROVED: serviceAreas now supports radius for coverage
-      serviceAreas: [{
-        type: {
-          type: String,
-          enum: ["Point"],
-          default: "Point",
-        },
-        coordinates: {
-          type: [Number],
-          validate: v => !v || v.length === 2,
-        },
-        address: String,
-        // New: coverage radius in km
-        radiusKm: {
-          type: Number,
-          min: 0,
-          default: 10,
-          comment: "Service coverage radius in kilometers"
-        }
-      }],
-
-      /* ================= VERIFICATION STATUS ================= */
+      // === Verification Workflow ===
       verificationStatus: {
         type: String,
         enum: ["incomplete", "pending", "approved", "rejected"],
@@ -183,7 +245,6 @@ const userSchema = new mongoose.Schema(
         default: 0,
       },
     },
-
     reviews: [{
       reviewerId: {
         type: mongoose.Schema.Types.ObjectId,
@@ -201,7 +262,7 @@ const userSchema = new mongoose.Schema(
       },
     }],
 
-    /* ================= SECURITY ================= */
+    /* ================= SECURITY & ACCOUNT STATUS ================= */
     isActive: {
       type: Boolean,
       default: true,
@@ -210,7 +271,6 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-
     lastLoginAt: Date,
     loginAttempts: {
       type: Number,
@@ -218,7 +278,7 @@ const userSchema = new mongoose.Schema(
     },
     lockUntil: Date,
 
-    /* ================= EMAIL & PASSWORD ================= */
+    /* ================= EMAIL VERIFICATION ================= */
     isEmailVerified: {
       type: Boolean,
       default: false,
@@ -226,6 +286,7 @@ const userSchema = new mongoose.Schema(
     emailVerificationToken: String,
     emailVerificationExpires: Date,
 
+    /* ================= PASSWORD RESET ================= */
     passwordResetToken: String,
     passwordResetExpires: Date,
 
@@ -248,30 +309,27 @@ const userSchema = new mongoose.Schema(
 /* ================= INDEXES ================= */
 userSchema.index({ role: 1 });
 userSchema.index({ location: "2dsphere" });
-userSchema.index({ "providerDetails.skills.name": 1 }); // ✅ Index skill names for search
+userSchema.index({ "providerDetails.skills.name": 1 });
 userSchema.index({ "providerDetails.isVerified": 1 });
 userSchema.index({ "ratings.average": -1 });
-userSchema.index({ kycVerified: 1 }); // ✅ Index for filtering verified users
+userSchema.index({ kycVerified: 1 });
 userSchema.index({ deletedAt: 1 });
 
 /* ================= OUTPUT SANITIZATION ================= */
+const sanitizeOutput = (ret) => {
+  delete ret.password;
+  delete ret.passwordResetToken;
+  delete ret.emailVerificationToken;
+  return ret;
+};
+
 userSchema.set("toJSON", {
-  transform: (doc, ret) => {
-    delete ret.password;
-    delete ret.passwordResetToken;
-    delete ret.emailVerificationToken;
-    return ret;
-  },
+  transform: (_, ret) => sanitizeOutput(ret),
   virtuals: true,
 });
 
 userSchema.set("toObject", {
-  transform: (doc, ret) => {
-    delete ret.password;
-    delete ret.passwordResetToken;
-    delete ret.emailVerificationToken;
-    return ret;
-  },
+  transform: (_, ret) => sanitizeOutput(ret),
   virtuals: true,
 });
 

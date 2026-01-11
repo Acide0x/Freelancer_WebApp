@@ -480,3 +480,203 @@ exports.changePassword = async (req, res) => {
     res.status(500).json({ message: "Server error during password change." });
   }
 };
+
+// @desc    Complete or update provider onboarding details
+// @route   PATCH /api/auth/onboarding
+// @access  Private (Provider only)
+exports.updateProviderOnboarding = async (req, res) => {
+  const userId = req.user?.id;
+  if (!userId) {
+    return res.status(401).json({ message: "Authentication required" });
+  }
+
+  try {
+    // Fetch user and verify they are a provider
+    const user = await User.findById(userId).select('role');
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    if (user.role !== 'provider') {
+      return res.status(403).json({ message: "Only providers can complete onboarding" });
+    }
+
+    const { 
+      headline,
+      workDescription,
+      skills,
+      rate,
+      minCallOutFee,
+      travelFeePerKm,
+      travelThresholdKm,
+      fixedRateProjects,
+      availabilityStatus,
+      portfolios,
+      serviceAreas,
+      experienceYears,
+      verificationStatus
+    } = req.body;
+
+    // 🔒 Prevent changing verification status from frontend (security)
+    if (verificationStatus && !['incomplete', 'pending'].includes(verificationStatus)) {
+      return res.status(400).json({ message: "Invalid verification status" });
+    }
+
+    // ✅ Build update object with validation
+    const update = {};
+
+    // --- Bio & Headline ---
+    if (headline !== undefined) {
+      if (typeof headline !== 'string' || headline.trim().length > 120) {
+        return res.status(400).json({ message: "Headline must be a string (max 120 chars)" });
+      }
+      update['providerDetails.headline'] = headline.trim();
+    }
+
+    if (workDescription !== undefined) {
+      if (typeof workDescription !== 'string' || workDescription.trim().length > 500) {
+        return res.status(400).json({ message: "Work description must be a string (max 500 chars)" });
+      }
+      update['providerDetails.workDescription'] = workDescription.trim();
+    }
+
+    // --- Skills ---
+    if (skills !== undefined) {
+      if (!Array.isArray(skills)) {
+        return res.status(400).json({ message: "Skills must be an array" });
+      }
+      const validatedSkills = [];
+      for (const skill of skills) {
+        if (!skill.name || typeof skill.name !== 'string') {
+          return res.status(400).json({ message: "Each skill must have a valid name" });
+        }
+        validatedSkills.push({
+          name: skill.name.trim(),
+          proficiency: Math.min(10, Math.max(1, parseInt(skill.proficiency) || 5)),
+          years: Math.max(0, parseInt(skill.years) || 0)
+        });
+      }
+      update['providerDetails.skills'] = validatedSkills;
+    }
+
+    // --- Rates ---
+    const numericFields = [
+      { key: 'rate', min: 0 },
+      { key: 'minCallOutFee', min: 0 },
+      { key: 'travelFeePerKm', min: 0 },
+      { key: 'travelThresholdKm', min: 0 },
+      { key: 'experienceYears', min: 0 }
+    ];
+
+    for (const field of numericFields) {
+      const value = req.body[field.key];
+      if (value !== undefined) {
+        const num = Number(value);
+        if (isNaN(num) || num < field.min) {
+          return res.status(400).json({ message: `${field.key} must be a number >= ${field.min}` });
+        }
+        update[`providerDetails.${field.key}`] = num;
+      }
+    }
+
+    // --- Fixed Rate Projects ---
+    if (fixedRateProjects !== undefined) {
+      if (!Array.isArray(fixedRateProjects)) {
+        return res.status(400).json({ message: "Fixed rate projects must be an array" });
+      }
+      const validatedProjects = [];
+      for (const proj of fixedRateProjects) {
+        if (!proj.name || !proj.details || proj.rate == null) continue; // skip invalid
+        validatedProjects.push({
+          name: proj.name.trim(),
+          details: proj.details.trim(),
+          rate: Number(proj.rate) >= 0 ? Number(proj.rate) : 0
+        });
+      }
+      update['providerDetails.fixedRateProjects'] = validatedProjects;
+    }
+
+    // --- Portfolios ---
+    if (portfolios !== undefined) {
+      if (!Array.isArray(portfolios)) {
+        return res.status(400).json({ message: "Portfolios must be an array" });
+      }
+      const validatedPortfolios = [];
+      for (const p of portfolios) {
+        if (!p.title) continue;
+        validatedPortfolios.push({
+          title: p.title.trim(),
+          description: (p.description || '').trim(),
+          images: Array.isArray(p.images) 
+            ? p.images.filter(img => typeof img === 'string').slice(0, 10)
+            : []
+        });
+      }
+      update['providerDetails.portfolios'] = validatedPortfolios;
+    }
+
+    // --- Service Areas ---
+    if (serviceAreas !== undefined) {
+      if (!Array.isArray(serviceAreas) || serviceAreas.length === 0) {
+        return res.status(400).json({ message: "At least one service area is required" });
+      }
+      const validatedAreas = [];
+      for (const area of serviceAreas) {
+        if (!area.address || typeof area.address !== 'string') {
+          return res.status(400).json({ message: "Service area must include a valid address" });
+        }
+        validatedAreas.push({
+          address: area.address.trim(),
+          radiusKm: Math.min(200, Math.max(5, parseInt(area.radiusKm) || 25)),
+          coordinates: Array.isArray(area.coordinates) && area.coordinates.length === 2
+            ? [parseFloat(area.coordinates[0]), parseFloat(area.coordinates[1])]
+            : undefined
+        });
+      }
+      update['providerDetails.serviceAreas'] = validatedAreas;
+    }
+
+    // --- Availability ---
+    if (availabilityStatus !== undefined) {
+      if (!['available', 'busy', 'offline'].includes(availabilityStatus)) {
+        return res.status(400).json({ message: "Invalid availability status" });
+      }
+      update['providerDetails.availabilityStatus'] = availabilityStatus;
+    }
+
+    // --- Verification Status (only allow transition to 'pending') ---
+    if (verificationStatus === 'pending') {
+      update['providerDetails.verificationStatus'] = 'pending';
+      update['providerDetails.submittedAt'] = new Date();
+    } else if (verificationStatus === 'incomplete') {
+      update['providerDetails.verificationStatus'] = 'incomplete';
+      update['providerDetails.submittedAt'] = undefined;
+    }
+
+    // Perform the update
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { $set: update },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!updatedUser) {
+      return res.status(404).json({ message: "User not found after update" });
+    }
+
+    // Return only providerDetails in response for efficiency
+    res.json({
+      message: "Onboarding details updated successfully",
+      providerDetails: updatedUser.providerDetails
+    });
+
+  } catch (error) {
+    console.error("Onboarding Update Error:", error);
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({
+        message: "Validation failed",
+        details: Object.values(error.errors).map(e => e.message)
+      });
+    }
+    res.status(500).json({ message: "Server error during onboarding update" });
+  }
+};
