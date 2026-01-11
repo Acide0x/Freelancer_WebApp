@@ -1,5 +1,6 @@
 // src/App.jsx
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import "leaflet/dist/leaflet.css";
 import HomePage from "./Home";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";

@@ -1,5 +1,5 @@
 // src/components/MyProfile/OnboardingTab.jsx
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Briefcase,
   Award,
@@ -22,7 +22,94 @@ import { Slider } from "@/components/ui/slider";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import api from "@/api/api";
 
+// -----------------------------
+// 🗺️ MAP COMPONENT (Embedded)
+// -----------------------------
+import { MapContainer, TileLayer, Circle, useMapEvents } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
+import L from "leaflet";
+
+// Fix default marker icon issue
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+});
+
+function LocationSetter({ onLocationSelect, isReadOnly }) {
+  useMapEvents({
+    click(e) {
+      if (isReadOnly) return;
+      const { lat, lng } = e.latlng;
+      fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`)
+        .then((res) => res.json())
+        .then((data) => {
+          const address = data.display_name || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+          onLocationSelect({ lat, lng, address });
+        })
+        .catch(() => {
+          onLocationSelect({ lat, lng, address: `${lat.toFixed(4)}, ${lng.toFixed(4)}` });
+        });
+    },
+  });
+  return null;
+}
+
+function MapWithCoverage({ coordinates, radiusKm, address, onLocationSelect, isReadOnly }) {
+  const defaultCenter = [27.7172, 85.3240]; // Kathmandu fallback
+  const center = coordinates && coordinates.length === 2 ? [coordinates[0], coordinates[1]] : defaultCenter;
+
+  return (
+    <MapContainer
+      center={center}
+      zoom={12}
+      style={{ height: "100%", width: "100%" }}
+      scrollWheelZoom={false}
+      dragging={!isReadOnly}
+      zoomControl={!isReadOnly}
+    >
+      <TileLayer
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+      />
+      {!isReadOnly && <LocationSetter onLocationSelect={onLocationSelect} isReadOnly={isReadOnly} />}
+      {coordinates && coordinates.length === 2 && (
+        <>
+          <Circle
+            center={[coordinates[0], coordinates[1]]}
+            radius={radiusKm * 1000}
+            color="#3b82f6"
+            fillColor="#3b82f6"
+            fillOpacity={0.2}
+            weight={2}
+          />
+          <div
+            style={{
+              position: "absolute",
+              top: "10px",
+              right: "10px",
+              zIndex: 1000,
+              background: "white",
+              padding: "4px 8px",
+              borderRadius: "4px",
+              fontSize: "12px",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+            }}
+          >
+            {address}
+          </div>
+        </>
+      )}
+    </MapContainer>
+  );
+}
+
+// -----------------------------
+// ONBOARDING CONFIG
+// -----------------------------
 const ONBOARDING_STEPS = [
   { id: "bio", title: "Bio", icon: <Briefcase className="w-4 h-4" /> },
   { id: "skills", title: "Skills", icon: <Award className="w-4 h-4" /> },
@@ -34,185 +121,114 @@ const ONBOARDING_STEPS = [
 
 const defaultOnboardingData = {
   headline: "",
-  bio: "",
-  skills: [{ name: "General Maintenance", proficiency: 5, years: 2 }],
+  workDescription: "",
+  skills: [],
   rate: 50,
   minCallOutFee: 30,
   travelFeePerKm: 2,
   travelThresholdKm: 15,
-  fixedRateProjects: [
-    {
-      name: "Drain Unclogging",
-      details: "Standard residential drain clearing",
-      rate: 120,
-    },
-  ],
+  fixedRateProjects: [],
   availabilityStatus: "available",
-  portfolios: [
-    {
-      title: "Kitchen Remodel",
-      description: "Complete overhaul of a modern kitchen",
-      images: ["/portfolio-sample-.jpg"],
-    },
-  ],
-  serviceAreas: [
-    {
-      address: "San Francisco, CA",
-      radiusKm: 25,
-      coordinates: [-122.4194, 37.7749],
-    },
-  ],
-  experienceYears: 6,
+  portfolios: [],
+  serviceAreas: [],
+  experienceYears: 0,
+  verificationStatus: "incomplete",
 };
 
-// 🔒 Helper to safely merge incoming data with defaults
 const mergeWithDefaults = (incomingData) => {
   return {
     ...defaultOnboardingData,
     ...(incomingData || {}),
-    skills: incomingData?.skills ?? defaultOnboardingData.skills,
-    fixedRateProjects:
-      incomingData?.fixedRateProjects ?? defaultOnboardingData.fixedRateProjects,
-    portfolios: incomingData?.portfolios ?? defaultOnboardingData.portfolios,
-    serviceAreas: incomingData?.serviceAreas ?? defaultOnboardingData.serviceAreas,
+    skills: Array.isArray(incomingData?.skills) ? incomingData.skills : [],
+    fixedRateProjects: Array.isArray(incomingData?.fixedRateProjects)
+      ? incomingData.fixedRateProjects
+      : [],
+    portfolios: Array.isArray(incomingData?.portfolios)
+      ? incomingData.portfolios
+      : [],
+    serviceAreas: Array.isArray(incomingData?.serviceAreas)
+      ? incomingData.serviceAreas
+      : [],
   };
 };
 
+const saveOnboardingToBackend = async (onboardingData) => {
+  try {
+    const response = await api.patch("/users/onboarding", onboardingData);
+    return response.data.providerDetails;
+  } catch (error) {
+    console.error("Onboarding save error:", error);
+    const message =
+      error.response?.data?.message ||
+      error.message ||
+      "Failed to save onboarding data";
+    toast.error(message);
+    throw error;
+  }
+};
+
+// -----------------------------
+// MAIN COMPONENT
+// -----------------------------
 export default function OnboardingTab({
-  providerStatus,
-  onStatusChange,
-  onboardingData,
-  onUpdateOnboardingData,
+  providerStatus: initialStatus,
+  onboardingData: initialData,
 }) {
   const [currentStep, setCurrentStep] = useState(0);
   const [localOnboardingData, setLocalOnboardingData] = useState(
-    mergeWithDefaults(onboardingData)
+    mergeWithDefaults(initialData)
   );
+  const [isSaving, setIsSaving] = useState(false);
 
-  const nextStep = () =>
+  const nextStep = () => {
     setCurrentStep((s) => Math.min(s + 1, ONBOARDING_STEPS.length - 1));
-  const prevStep = () => setCurrentStep((s) => Math.max(s - 1, 0));
-
-  const handleSubmitVerification = () => {
-    onStatusChange("pending");
-    toast.success("Application submitted for review");
   };
 
-  const updateLocalData = (updates) => {
-    const newData = { ...localOnboardingData, ...updates };
-    setLocalOnboardingData(newData);
-    if (onUpdateOnboardingData) {
-      onUpdateOnboardingData(newData);
+  const prevStep = () => setCurrentStep((s) => Math.max(s - 1, 0));
+
+  const handleSubmitVerification = async () => {
+    setIsSaving(true);
+    try {
+      const updatedData = await saveOnboardingToBackend({
+        ...localOnboardingData,
+        verificationStatus: "pending",
+      });
+      setLocalOnboardingData(updatedData);
+      toast.success("Application submitted for review!");
+    } catch (err) {
+      // Error shown in helper
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const renderSkillsStep = () => {
-    // ✅ Defensive fallback
-    const skills = localOnboardingData.skills || [];
-    return (
-      <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
-        <div className="space-y-2">
-          <h2 className="text-3xl font-black tracking-tighter uppercase italic">
-            Expertise & Proficiency
-          </h2>
-          <p className="text-gray-500 font-medium">
-            Rate your skills on a scale of 1-10 and specify your experience.
-          </p>
-        </div>
-        <div className="space-y-6">
-          {skills.map((skill, idx) => (
-            <Card
-              key={idx}
-              className="bg-gray-50 border-gray-200 p-6 rounded-2xl space-y-6"
-            >
-              <div className="flex items-center justify-between gap-4">
-                <Input
-                  value={skill.name}
-                  onChange={(e) => {
-                    const newSkills = [...skills];
-                    newSkills[idx].name = e.target.value;
-                    updateLocalData({ skills: newSkills });
-                  }}
-                  placeholder="Skill Name (e.g. Electrical)"
-                  className="bg-transparent border-none text-xl font-black p-0 h-auto focus-visible:ring-0 placeholder:text-gray-300"
-                />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => {
-                    const newSkills = skills.filter((_, i) => i !== idx);
-                    updateLocalData({ skills: newSkills });
-                  }}
-                  className="text-gray-400 hover:text-red-500 transition-colors"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </Button>
-              </div>
-              <div className="grid md:grid-cols-2 gap-12">
-                <div className="space-y-4">
-                  <div className="flex justify-between items-end">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
-                      Proficiency (1-10)
-                    </label>
-                    <span className="text-xl font-black italic">
-                      {skill.proficiency}/10
-                    </span>
-                  </div>
-                  <Slider
-                    value={[skill.proficiency]}
-                    max={10}
-                    min={1}
-                    step={1}
-                    onValueChange={([val]) => {
-                      const newSkills = [...skills];
-                      newSkills[idx].proficiency = val;
-                      updateLocalData({ skills: newSkills });
-                    }}
-                    className="py-4"
-                  />
-                </div>
-                <div className="space-y-4">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
-                    Years Active
-                  </label>
-                  <div className="flex items-center gap-4">
-                    <Input
-                      type="number"
-                      value={skill.years}
-                      onChange={(e) => {
-                        const newSkills = [...skills];
-                        newSkills[idx].years =
-                          Number.parseInt(e.target.value) || 0;
-                        updateLocalData({ skills: newSkills });
-                      }}
-                      className="bg-gray-100 border-gray-200 h-12 w-24 rounded-xl font-black text-center"
-                    />
-                    <span className="text-sm font-bold text-gray-500">
-                      Professional experience
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </Card>
-          ))}
-          <Button
-            variant="outline"
-            onClick={() =>
-              updateLocalData({
-                skills: [
-                  ...skills,
-                  { name: "", proficiency: 5, years: 0 },
-                ],
-              })
-            }
-            className="w-full h-14 border-dashed border-gray-200 bg-transparent hover:bg-gray-100 hover:border-gray-300 rounded-2xl font-black uppercase tracking-widest text-[10px]"
-          >
-            <Plus className="w-4 h-4 mr-2" /> Add Skill
-          </Button>
-        </div>
-      </div>
-    );
+  const handleSaveDraft = async () => {
+    setIsSaving(true);
+    try {
+      const updatedData = await saveOnboardingToBackend({
+        ...localOnboardingData,
+        verificationStatus: "incomplete",
+      });
+      setLocalOnboardingData(updatedData);
+      toast.success("Draft saved");
+    } catch (err) {
+      // Error shown in helper
+    } finally {
+      setIsSaving(false);
+    }
   };
+
+  const updateLocalData = (updates) => {
+    setLocalOnboardingData((prev) => ({ ...prev, ...updates }));
+  };
+
+  const isReadOnly = localOnboardingData.verificationStatus === "pending";
+
+  useEffect(() => {
+    setLocalOnboardingData(mergeWithDefaults(initialData));
+  }, [initialData]);
+
+  const providerStatus = localOnboardingData.verificationStatus;
 
   if (providerStatus === "pending") {
     return (
@@ -239,7 +255,16 @@ export default function OnboardingTab({
             </p>
           </div>
           <Button
-            onClick={() => onStatusChange("incomplete")}
+            onClick={async () => {
+              try {
+                const updated = await saveOnboardingToBackend({
+                  verificationStatus: "incomplete",
+                });
+                setLocalOnboardingData(updated);
+              } catch (err) {
+                /* error handled */
+              }
+            }}
             variant="ghost"
             className="text-gray-400 hover:text-gray-900 text-[10px] uppercase font-black"
           >
@@ -250,7 +275,6 @@ export default function OnboardingTab({
     );
   }
 
-  // ✅ Ensure data integrity for all steps
   const data = localOnboardingData;
 
   return (
@@ -299,9 +323,10 @@ export default function OnboardingTab({
                   </label>
                   <Input
                     value={data.headline}
-                    onChange={(e) => updateLocalData({ headline: e.target.value })}
+                    onChange={(e) => !isReadOnly && updateLocalData({ headline: e.target.value })}
                     placeholder="e.g. Master Plumber with 15 years experience"
                     className="bg-gray-100 border-gray-200 h-14 rounded-xl"
+                    disabled={isReadOnly}
                   />
                 </div>
                 <div className="grid gap-2">
@@ -309,17 +334,126 @@ export default function OnboardingTab({
                     Experience Bio
                   </label>
                   <Textarea
-                    value={data.bio}
-                    onChange={(e) => updateLocalData({ bio: e.target.value })}
+                    value={data.workDescription}
+                    onChange={(e) => !isReadOnly && updateLocalData({ workDescription: e.target.value })}
                     placeholder="Describe your background and expertise..."
                     className="bg-gray-100 border-gray-200 min-h-[180px] rounded-xl"
+                    disabled={isReadOnly}
                   />
                 </div>
               </div>
             </div>
           )}
 
-          {currentStep === 1 && renderSkillsStep()}
+          {currentStep === 1 && (
+            <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
+              <div className="space-y-2">
+                <h2 className="text-3xl font-black tracking-tighter uppercase italic">
+                  Expertise & Proficiency
+                </h2>
+                <p className="text-gray-500 font-medium">
+                  Rate your skills on a scale of 1-10 and specify your experience.
+                </p>
+              </div>
+              <div className="space-y-6">
+                {(data.skills || []).map((skill, idx) => (
+                  <Card
+                    key={idx}
+                    className="bg-gray-50 border-gray-200 p-6 rounded-2xl space-y-6"
+                  >
+                    <div className="flex items-center justify-between gap-4">
+                      <Input
+                        value={skill.name || ""}
+                        onChange={(e) => {
+                          if (isReadOnly) return;
+                          const newSkills = [...(data.skills || [])];
+                          newSkills[idx].name = e.target.value;
+                          updateLocalData({ skills: newSkills });
+                        }}
+                        placeholder="Skill Name (e.g. Electrical)"
+                        className="bg-transparent border-none text-xl font-black p-0 h-auto focus-visible:ring-0 placeholder:text-gray-300"
+                        disabled={isReadOnly}
+                      />
+                      {!isReadOnly && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            const newSkills = (data.skills || []).filter((_, i) => i !== idx);
+                            updateLocalData({ skills: newSkills });
+                          }}
+                          className="text-gray-400 hover:text-red-500 transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </div>
+                    <div className="grid md:grid-cols-2 gap-12">
+                      <div className="space-y-4">
+                        <div className="flex justify-between items-end">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+                            Proficiency (1-10)
+                          </label>
+                          <span className="text-xl font-black italic">
+                            {skill.proficiency || 5}/10
+                          </span>
+                        </div>
+                        <Slider
+                          value={[skill.proficiency || 5]}
+                          max={10}
+                          min={1}
+                          step={1}
+                          onValueChange={([val]) => {
+                            if (isReadOnly) return;
+                            const newSkills = [...(data.skills || [])];
+                            newSkills[idx].proficiency = val;
+                            updateLocalData({ skills: newSkills });
+                          }}
+                          className="py-4"
+                          disabled={isReadOnly}
+                        />
+                      </div>
+                      <div className="space-y-4">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+                          Years Active
+                        </label>
+                        <div className="flex items-center gap-4">
+                          <Input
+                            type="number"
+                            value={skill.years || 0}
+                            onChange={(e) => {
+                              if (isReadOnly) return;
+                              const newSkills = [...(data.skills || [])];
+                              newSkills[idx].years = Number.parseInt(e.target.value) || 0;
+                              updateLocalData({ skills: newSkills });
+                            }}
+                            className="bg-gray-100 border-gray-200 h-12 w-24 rounded-xl font-black text-center"
+                            disabled={isReadOnly}
+                          />
+                          <span className="text-sm font-bold text-gray-500">
+                            Professional experience
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+                {!isReadOnly && (
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      updateLocalData({
+                        skills: [...(data.skills || []), { name: "", proficiency: 5, years: 0 }],
+                      })
+                    }
+                    className="w-full h-14 border-dashed border-gray-200 bg-transparent hover:bg-gray-100 hover:border-gray-300 rounded-2xl font-black uppercase tracking-widest text-[10px]"
+                  >
+                    <Plus className="w-4 h-4 mr-2" /> Add Skill
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
 
           {currentStep === 2 && (
             <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
@@ -341,10 +475,9 @@ export default function OnboardingTab({
                     <Input
                       type="number"
                       value={data.rate}
-                      onChange={(e) =>
-                        updateLocalData({ rate: Number(e.target.value) })
-                      }
+                      onChange={(e) => !isReadOnly && updateLocalData({ rate: Number(e.target.value) })}
                       className="pl-9 bg-gray-100 border-none h-12 text-xl font-black rounded-xl"
+                      disabled={isReadOnly}
                     />
                   </div>
                 </Card>
@@ -357,10 +490,9 @@ export default function OnboardingTab({
                     <Input
                       type="number"
                       value={data.minCallOutFee}
-                      onChange={(e) =>
-                        updateLocalData({ minCallOutFee: Number(e.target.value) })
-                      }
+                      onChange={(e) => !isReadOnly && updateLocalData({ minCallOutFee: Number(e.target.value) })}
                       className="pl-9 bg-gray-100 border-none h-12 text-xl font-black rounded-xl"
+                      disabled={isReadOnly}
                     />
                   </div>
                 </Card>
@@ -373,10 +505,9 @@ export default function OnboardingTab({
                     <Input
                       type="number"
                       value={data.travelFeePerKm}
-                      onChange={(e) =>
-                        updateLocalData({ travelFeePerKm: Number(e.target.value) })
-                      }
+                      onChange={(e) => !isReadOnly && updateLocalData({ travelFeePerKm: Number(e.target.value) })}
                       className="pl-9 bg-gray-100 border-none h-12 text-xl font-black rounded-xl"
+                      disabled={isReadOnly}
                     />
                   </div>
                   <div className="flex items-center gap-2 text-[9px] font-bold text-gray-500">
@@ -384,16 +515,14 @@ export default function OnboardingTab({
                     <Input
                       type="number"
                       value={data.travelThresholdKm}
-                      onChange={(e) =>
-                        updateLocalData({ travelThresholdKm: Number(e.target.value) })
-                      }
+                      onChange={(e) => !isReadOnly && updateLocalData({ travelThresholdKm: Number(e.target.value) })}
                       className="w-10 h-5 bg-gray-100 border-none p-1 text-center"
+                      disabled={isReadOnly}
                     />
                     <span>km</span>
                   </div>
                 </Card>
               </div>
-
               <div className="space-y-6">
                 <h3 className="text-xs font-black uppercase tracking-[0.2em] text-gray-500">
                   Fixed-Rate Projects
@@ -405,39 +534,45 @@ export default function OnboardingTab({
                   >
                     <div className="flex justify-between gap-4">
                       <Input
-                        value={project.name}
+                        value={project.name || ""}
                         onChange={(e) => {
+                          if (isReadOnly) return;
                           const newProjects = [...(data.fixedRateProjects || [])];
                           newProjects[idx].name = e.target.value;
                           updateLocalData({ fixedRateProjects: newProjects });
                         }}
                         placeholder="Project Name"
                         className="bg-transparent border-none text-lg font-black p-0 h-auto focus-visible:ring-0"
+                        disabled={isReadOnly}
                       />
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => {
-                          const newProjects = (data.fixedRateProjects || []).filter(
-                            (_, i) => i !== idx
-                          );
-                          updateLocalData({ fixedRateProjects: newProjects });
-                        }}
-                        className="text-gray-400 hover:text-red-500"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
+                      {!isReadOnly && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            const newProjects = (data.fixedRateProjects || []).filter(
+                              (_, i) => i !== idx
+                            );
+                            updateLocalData({ fixedRateProjects: newProjects });
+                          }}
+                          className="text-gray-400 hover:text-red-500"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      )}
                     </div>
                     <div className="grid md:grid-cols-[1fr_150px] gap-6">
                       <Textarea
-                        value={project.details}
+                        value={project.details || ""}
                         onChange={(e) => {
+                          if (isReadOnly) return;
                           const newProjects = [...(data.fixedRateProjects || [])];
                           newProjects[idx].details = e.target.value;
                           updateLocalData({ fixedRateProjects: newProjects });
                         }}
                         placeholder="Project details and scope..."
                         className="bg-gray-100 border-gray-200 rounded-xl resize-none h-20"
+                        disabled={isReadOnly}
                       />
                       <div className="space-y-2">
                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">
@@ -445,44 +580,43 @@ export default function OnboardingTab({
                         </label>
                         <Input
                           type="number"
-                          value={project.rate}
+                          value={project.rate || 0}
                           onChange={(e) => {
+                            if (isReadOnly) return;
                             const newProjects = [...(data.fixedRateProjects || [])];
                             newProjects[idx].rate = Number(e.target.value);
                             updateLocalData({ fixedRateProjects: newProjects });
                           }}
                           className="bg-gray-100 border-gray-200 h-12 text-lg font-black rounded-xl"
+                          disabled={isReadOnly}
                         />
                       </div>
                     </div>
                   </Card>
                 ))}
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    updateLocalData({
-                      fixedRateProjects: [
-                        ...(data.fixedRateProjects || []),
-                        { name: "", details: "", rate: 0 },
-                      ],
-                    })
-                  }
-                  className="w-full h-12 border-dashed border-gray-200 bg-transparent hover:bg-gray-100 rounded-2xl font-black uppercase text-[10px] tracking-widest"
-                >
-                  <Plus className="w-4 h-4 mr-2" /> Add Fixed-Rate Project
-                </Button>
+                {!isReadOnly && (
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      updateLocalData({
+                        fixedRateProjects: [
+                          ...(data.fixedRateProjects || []),
+                          { name: "", details: "", rate: 0 },
+                        ],
+                      })
+                    }
+                    className="w-full h-12 border-dashed border-gray-200 bg-transparent hover:bg-gray-100 rounded-2xl font-black uppercase text-[10px] tracking-widest"
+                  >
+                    <Plus className="w-4 h-4 mr-2" /> Add Fixed-Rate Project
+                  </Button>
+                )}
               </div>
-
               <div className="p-6 bg-red-50 border border-red-200 rounded-2xl space-y-3">
                 <div className="flex items-center gap-2 text-red-700 font-black uppercase tracking-tighter italic text-xs">
                   <ShieldCheck className="w-4 h-4" /> Professional Rate Agreement
                 </div>
                 <p className="text-[10px] font-medium text-red-600 leading-relaxed italic">
-                  Rate information must be finalized with full mutual agreement.
-                  Providers may not request additional compensation beyond
-                  pre-decided amounts unless a formal scope update is mutually
-                  agreed upon with the client. Proof of such agreements must be
-                  available for Administrative review in the event of a dispute.
+                  Rate information must be finalized with full mutual agreement...
                 </p>
               </div>
             </div>
@@ -494,20 +628,22 @@ export default function OnboardingTab({
                 <h2 className="text-3xl font-black tracking-tighter uppercase italic">
                   Portfolio & Work Samples
                 </h2>
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    updateLocalData({
-                      portfolios: [
-                        ...(data.portfolios || []),
-                        { title: "", description: "", images: [] },
-                      ],
-                    })
-                  }
-                  className="h-10 bg-gray-100 border-gray-200 font-black uppercase text-[10px]"
-                >
-                  <Plus className="w-4 h-4 mr-2" /> New Project
-                </Button>
+                {!isReadOnly && (
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      updateLocalData({
+                        portfolios: [
+                          ...(data.portfolios || []),
+                          { title: "", description: "", images: [] },
+                        ],
+                      })
+                    }
+                    className="h-10 bg-gray-100 border-gray-200 font-black uppercase text-[10px]"
+                  >
+                    <Plus className="w-4 h-4 mr-2" /> New Project
+                  </Button>
+                )}
               </div>
               <div className="space-y-8">
                 {(data.portfolios || []).map((project, pIdx) => (
@@ -518,73 +654,80 @@ export default function OnboardingTab({
                     <div className="flex justify-between items-start gap-4">
                       <div className="space-y-4 flex-1">
                         <Input
-                          value={project.title}
+                          value={project.title || ""}
                           onChange={(e) => {
+                            if (isReadOnly) return;
                             const newPortfolios = [...(data.portfolios || [])];
                             newPortfolios[pIdx].title = e.target.value;
                             updateLocalData({ portfolios: newPortfolios });
                           }}
                           placeholder="Project Title"
                           className="bg-transparent border-none text-2xl font-black p-0 h-auto focus-visible:ring-0"
+                          disabled={isReadOnly}
                         />
                         <Textarea
-                          value={project.description}
+                          value={project.description || ""}
                           onChange={(e) => {
+                            if (isReadOnly) return;
                             const newPortfolios = [...(data.portfolios || [])];
                             newPortfolios[pIdx].description = e.target.value;
                             updateLocalData({ portfolios: newPortfolios });
                           }}
                           placeholder="Describe the work, techniques used, and outcome..."
                           className="bg-gray-100 border-gray-200 rounded-xl min-h-[100px]"
+                          disabled={isReadOnly}
                         />
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => {
-                          const newPortfolios = (data.portfolios || []).filter(
-                            (_, i) => i !== pIdx
-                          );
-                          updateLocalData({ portfolios: newPortfolios });
-                        }}
-                        className="text-gray-400 hover:text-red-500"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </Button>
+                      {!isReadOnly && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            const newPortfolios = (data.portfolios || []).filter(
+                              (_, i) => i !== pIdx
+                            );
+                            updateLocalData({ portfolios: newPortfolios });
+                          }}
+                          className="text-gray-400 hover:text-red-500"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </Button>
+                      )}
                     </div>
                     <div className="space-y-4">
                       <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
-                        Project Images ({project.images.length}/10)
+                        Project Images ({project.images?.length || 0}/10)
                       </label>
                       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                        {project.images.map((img, iIdx) => (
+                        {project.images?.map((img, iIdx) => (
                           <div
                             key={iIdx}
                             className="aspect-square bg-gray-100 border border-gray-200 rounded-xl overflow-hidden relative group"
                           >
                             <img
-                              src={img || "/placeholder.svg"}
+                              src={img}
                               className="w-full h-full object-cover opacity-60 group-hover:opacity-100"
                               onError={(e) => {
                                 e.target.src = "/placeholder.svg";
                               }}
                             />
-                            <button
-                              onClick={() => {
-                                const newPortfolios = [...(data.portfolios || [])];
-                                newPortfolios[pIdx].images =
-                                  newPortfolios[pIdx].images.filter(
+                            {!isReadOnly && (
+                              <button
+                                onClick={() => {
+                                  const newPortfolios = [...(data.portfolios || [])];
+                                  newPortfolios[pIdx].images = newPortfolios[pIdx].images.filter(
                                     (_, i) => i !== iIdx
                                   );
-                                updateLocalData({ portfolios: newPortfolios });
-                              }}
-                              className="absolute top-2 right-2 p-1.5 bg-black/10 text-gray-800 opacity-0 group-hover:opacity-100 rounded-lg transition-opacity"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
+                                  updateLocalData({ portfolios: newPortfolios });
+                                }}
+                                className="absolute top-2 right-2 p-1.5 bg-black/10 text-gray-800 opacity-0 group-hover:opacity-100 rounded-lg transition-opacity"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
                           </div>
                         ))}
-                        {project.images.length < 10 && (
+                        {(!isReadOnly && (!project.images || project.images.length < 10)) && (
                           <label className="aspect-square border-2 border-dashed border-gray-200 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:bg-gray-100">
                             <Plus className="w-6 h-6 text-gray-400" />
                             <input
@@ -593,17 +736,21 @@ export default function OnboardingTab({
                               multiple
                               accept="image/*"
                               onChange={(e) => {
+                                if (isReadOnly) return;
                                 const files = Array.from(e.target.files || []);
                                 if (files.length > 0) {
                                   const newPortfolios = [...(data.portfolios || [])];
-                                  const remainingSlots = 10 - project.images.length;
+                                  const remainingSlots = 10 - (newPortfolios[pIdx]?.images?.length || 0);
                                   const imagesToAdd = files
                                     .slice(0, remainingSlots)
-                                    .map((file) => URL.createObjectURL(file)); // ✅ Fixed: use each file
-                                  newPortfolios[pIdx].images = [
-                                    ...newPortfolios[pIdx].images,
-                                    ...imagesToAdd,
-                                  ];
+                                    .map((file) => URL.createObjectURL(file));
+                                  newPortfolios[pIdx] = {
+                                    ...newPortfolios[pIdx],
+                                    images: [
+                                      ...(newPortfolios[pIdx]?.images || []),
+                                      ...imagesToAdd,
+                                    ],
+                                  };
                                   updateLocalData({ portfolios: newPortfolios });
                                 }
                               }}
@@ -618,84 +765,120 @@ export default function OnboardingTab({
             </div>
           )}
 
+          {/* ✅ STEP 4: SERVICE AREA WITH LEAFLET MAP */}
           {currentStep === 4 && (
             <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
               <h2 className="text-3xl font-black tracking-tighter uppercase italic">
                 Operational Range
               </h2>
-              <div className="space-y-8">
-                <div className="grid gap-4 p-8 bg-gray-50 border border-gray-200 rounded-3xl">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
-                      Primary Base Location
-                    </label>
-                    <div className="relative">
-                      <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                      <Input
-                        value={(data.serviceAreas?.[0]?.address) || ""}
-                        onChange={(e) => {
-                          const newServiceAreas = [...(data.serviceAreas || [])];
-                          newServiceAreas[0] = {
-                            ...(newServiceAreas[0] || {}),
-                            address: e.target.value,
-                          };
-                          updateLocalData({ serviceAreas: newServiceAreas });
-                        }}
-                        placeholder="Enter your business address"
-                        className="pl-12 bg-gray-100 border-gray-200 h-14 rounded-xl text-lg font-black"
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-center">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
-                        Service Radius
-                      </label>
-                      <span className="text-2xl font-black italic">
-                        {(data.serviceAreas?.[0]?.radiusKm) || 0} km
-                      </span>
-                    </div>
-                    <Slider
-                      value={[(data.serviceAreas?.[0]?.radiusKm) || 5]}
-                      max={200}
-                      min={5}
-                      step={5}
-                      onValueChange={([val]) => {
+
+              {/* Base Location Controls */}
+              <div className="flex gap-3">
+                <div className="flex-1 relative">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 block mb-2">
+                    Primary Base Location
+                  </label>
+                  <div className="relative">
+                    <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <Input
+                      value={(data.serviceAreas?.[0]?.address) || ""}
+                      onChange={(e) => {
+                        if (isReadOnly) return;
                         const newServiceAreas = [...(data.serviceAreas || [])];
                         newServiceAreas[0] = {
-                          ...(newServiceAreas[0] || { coordinates: [] }),
-                          radiusKm: val,
+                          ...(newServiceAreas[0] || {}),
+                          address: e.target.value,
                         };
                         updateLocalData({ serviceAreas: newServiceAreas });
                       }}
-                      className="py-4"
+                      placeholder="Search address..."
+                      className="pl-12 bg-gray-100 border-gray-200 h-14 rounded-xl text-lg font-black"
+                      disabled={isReadOnly}
                     />
                   </div>
                 </div>
-                <div className="aspect-[16/7] bg-gray-100 border border-gray-200 rounded-3xl overflow-hidden relative group">
-                  <img
-                    src="/service-area-map.jpg"
-                    className="object-cover w-full h-full grayscale opacity-40 group-hover:opacity-60 transition-opacity"
-                    onError={(e) => {
-                      e.target.src = "https://via.placeholder.com/800x300?text=Map+Preview";
+                {!isReadOnly && (
+                  <Button
+                    type="button"
+                    onClick={async () => {
+                      if ("geolocation" in navigator) {
+                        try {
+                          const position = await new Promise((resolve, reject) =>
+                            navigator.geolocation.getCurrentPosition(resolve, reject)
+                          );
+                          const { latitude, longitude } = position.coords;
+                          const reverseGeocodeUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`;
+                          const res = await fetch(reverseGeocodeUrl);
+                          const geoData = await res.json();
+                          const address = geoData.display_name || `${latitude}, ${longitude}`;
+
+                          const newServiceAreas = [...(data.serviceAreas || [])];
+                          newServiceAreas[0] = {
+                            ...(newServiceAreas[0] || {}),
+                            address,
+                            coordinates: [latitude, longitude],
+                          };
+                          updateLocalData({ serviceAreas: newServiceAreas });
+                        } catch (err) {
+                          toast.error("Failed to get current location");
+                        }
+                      } else {
+                        toast.error("Geolocation not supported");
+                      }
                     }}
-                  />
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="p-6 bg-white/90 backdrop-blur-xl border border-gray-200 rounded-3xl flex flex-col items-center gap-4 text-center">
-                      <div className="w-12 h-12 bg-gray-100 rounded-2xl flex items-center justify-center animate-pulse">
-                        <Navigation className="w-6 h-6 text-gray-800" />
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-xs font-black uppercase tracking-widest text-gray-500 italic">
-                          Coverage Visualized
-                        </p>
-                        <p className="text-sm font-bold text-gray-900 max-w-[200px]">
-                          Coverage area is calculated dynamically from your base address.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
+                    className="h-14 px-4 bg-gray-100 border border-gray-200 hover:bg-gray-200 text-gray-700 font-black uppercase text-[10px]"
+                  >
+                    Use Current Location
+                  </Button>
+                )}
+              </div>
+
+              {/* Radius Slider */}
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+                    Service Radius
+                  </label>
+                  <span className="text-2xl font-black italic">
+                    {(data.serviceAreas?.[0]?.radiusKm) || 0} km
+                  </span>
                 </div>
+                <Slider
+                  value={[(data.serviceAreas?.[0]?.radiusKm) || 5]}
+                  max={200}
+                  min={5}
+                  step={5}
+                  onValueChange={([val]) => {
+                    if (isReadOnly) return;
+                    const newServiceAreas = [...(data.serviceAreas || [])];
+                    newServiceAreas[0] = {
+                      ...(newServiceAreas[0] || { coordinates: [] }),
+                      radiusKm: val,
+                    };
+                    updateLocalData({ serviceAreas: newServiceAreas });
+                  }}
+                  className="py-4"
+                  disabled={isReadOnly}
+                />
+              </div>
+
+              {/* Interactive Map */}
+              <div className="aspect-[16/7] rounded-3xl overflow-hidden border border-gray-200">
+                <MapWithCoverage
+                  isReadOnly={isReadOnly}
+                  address={(data.serviceAreas?.[0]?.address) || ""}
+                  coordinates={data.serviceAreas?.[0]?.coordinates || null}
+                  radiusKm={data.serviceAreas?.[0]?.radiusKm || 5}
+                  onLocationSelect={({ lat, lng, address }) => {
+                    const newServiceAreas = [...(data.serviceAreas || [])];
+                    newServiceAreas[0] = {
+                      ...(newServiceAreas[0] || {}),
+                      address,
+                      coordinates: [lat, lng],
+                    };
+                    updateLocalData({ serviceAreas: newServiceAreas });
+                  }}
+                />
               </div>
             </div>
           )}
@@ -720,7 +903,7 @@ export default function OnboardingTab({
                       {data.headline || "Unspecified Headline"}
                     </p>
                     <p className="text-sm text-gray-600 leading-relaxed font-medium">
-                      {data.bio || "No professional bio provided."}
+                      {data.workDescription || "No professional bio provided."}
                     </p>
                   </div>
                 </section>
@@ -796,14 +979,14 @@ export default function OnboardingTab({
                             {p.title}
                           </p>
                           <Badge className="bg-gray-100 text-gray-500 text-[8px]">
-                            {p.images.length} Images
+                            {p.images?.length || 0} Images
                           </Badge>
                         </div>
                         <div className="flex gap-2 overflow-x-auto pb-2">
-                          {p.images.map((img, ii) => (
+                          {p.images?.map((img, ii) => (
                             <img
                               key={ii}
-                              src={img || "/placeholder.svg"}
+                              src={img}
                               className="w-12 h-12 object-cover rounded-lg border border-gray-200 shrink-0"
                               onError={(e) => {
                                 e.target.src = "/placeholder.svg";
@@ -820,10 +1003,7 @@ export default function OnboardingTab({
                 <div className="p-6 bg-emerald-50 border border-emerald-200 rounded-2xl flex gap-4">
                   <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
                   <p className="text-[10px] font-medium text-emerald-700 leading-relaxed italic">
-                    By submitting this application, you verify that all technical details,
-                    rates, and portfolio works are authentic and representative of your
-                    professional services. SkillLink reserves the right to audit these
-                    details during the verification process.
+                    By submitting this application, you verify that all technical details...
                   </p>
                 </div>
               </div>
@@ -843,10 +1023,17 @@ export default function OnboardingTab({
           </Button>
           <Button
             onClick={currentStep === 5 ? handleSubmitVerification : nextStep}
-            className="bg-black text-white font-black uppercase tracking-widest text-[10px] px-8 py-6 rounded-2xl hover:scale-105 transition-transform"
+            disabled={isSaving || isReadOnly}
+            className="bg-black text-white font-black uppercase tracking-widest text-[10px] px-8 py-6 rounded-2xl hover:scale-105 transition-transform disabled:opacity-50"
           >
-            {currentStep === 5 ? "Submit Verification" : "Next Step"}{" "}
-            <ChevronRight className="w-4 h-4 ml-2" />
+            {isSaving ? (
+              "Saving..."
+            ) : currentStep === 5 ? (
+              "Submit Verification"
+            ) : (
+              "Next Step"
+            )}{" "}
+            {currentStep !== 5 && <ChevronRight className="w-4 h-4 ml-2" />}
           </Button>
         </div>
       </Card>
