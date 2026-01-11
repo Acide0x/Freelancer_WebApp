@@ -6,6 +6,7 @@ const cookieParser = require("cookie-parser");
 
 const userRoutes = require("./routes/user.route");
 const jobRoutes = require("./routes/job.route");
+const adminRoutes = require("./routes/admin.route");
 
 const app = express();
 
@@ -45,6 +46,7 @@ const connectDB = async () => {
 // -------------------- Routes --------------------
 app.use("/users", userRoutes);
 app.use("/jobs", jobRoutes);
+app.use("/admins", adminRoutes);
 
 // -------------------- Health Check --------------------
 app.get("/", (req, res) => {

@@ -9,6 +9,7 @@ import WorkersPage from "./pages/WorkerListing";
 import WorkerProfile from "./pages/WorkerProfile";
 import ProfilePage from "./pages/ProfilePage";
 import WorkersDashboardPage from "./pages/WorkersDashboardPage"; // ✅ Only dashboard route needed
+import AdminDashboardClient from "./pages/AdminDashboardPage";
 
 import Navbar from './components/Navbar';
 import Footer from './components/footer'; 
@@ -36,6 +37,7 @@ export default function App() {
             <Route path="/profile" element={<ProfilePage />} />
             {/* ✅ Single route for full worker dashboard */}
             <Route path="/workersdashboard" element={<WorkersDashboardPage />} />
+            <Route path="/admindashboard" element={<AdminDashboardClient />} /> 
             {/* Optional: catch-all fallback */}
             <Route path="*" element={<HomePage />} />
           </Routes>
