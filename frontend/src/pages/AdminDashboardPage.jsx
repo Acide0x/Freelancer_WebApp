@@ -187,6 +187,11 @@ export default function AdminDashboardClient() {
     setEdits({});
   };
 
+  // Helper to safely format status for display
+  const formatStatus = (status) => {
+    return status.charAt(0).toUpperCase() + status.slice(1);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -195,11 +200,6 @@ export default function AdminDashboardClient() {
     );
   }
 
-  // Helper to safely format status for display
-  const formatStatus = (status) => {
-    return status.charAt(0).toUpperCase() + status.slice(1);
-  };
-  
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       {/* Header */}
@@ -277,47 +277,49 @@ export default function AdminDashboardClient() {
         </div>
       ) : viewMode === "list" ? (
         <div className="space-y-3">
-          {filteredRequests.map((request) => (
-            <div
-              key={request._id}
-              onClick={() => setSelectedRequest(request)}
-              className="bg-white border border-gray-200 rounded-lg p-4 hover:border-green-500 hover:shadow-md transition cursor-pointer"
-            >
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-gray-900">
-                    {request.businessName || request.name}
-                  </h3>
-                  <p className="text-sm text-gray-600">{request.email}</p>
+          {filteredRequests.map((request) => {
+            const currentStatus = getVerificationStatus(request);
+            return (
+              <div
+                key={request._id}
+                onClick={() => setSelectedRequest(request)}
+                className="bg-white border border-gray-200 rounded-lg p-4 hover:border-green-500 hover:shadow-md transition cursor-pointer"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex-1">
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      {request.businessName || request.name}
+                    </h3>
+                    <p className="text-sm text-gray-600">{request.email}</p>
+                  </div>
+                  <span
+                    className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(currentStatus)}`}
+                  >
+                    {formatStatus(currentStatus)}
+                  </span>
                 </div>
-                <span
-                  className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(
-                    request.status
-                  )}`}
-                >
-                  {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
-                </span>
-              </div>
-              <p className="text-sm text-gray-700 mb-3">
-                {request.providerDetails?.headline ?? "No headline"}
-              </p>
-              <div className="flex items-center justify-between">
-                <div className="text-sm text-gray-600">
-                  <p>💼 {(request.providerDetails?.experienceYears ?? 0)}+ years experience</p>
-                  <p>
-                    📍 {request.providerDetails?.serviceAreas?.[0]?.address ?? "Location not set"}
-                  </p>
+                <p className="text-sm text-gray-700 mb-3">
+                  {request.providerDetails?.headline ?? "No headline"}
+                </p>
+                <div className="flex items-center justify-between">
+                  <div className="text-sm text-gray-600">
+                    <p>💼 {(request.providerDetails?.experienceYears ?? 0)}+ years experience</p>
+                    <p>
+                      📍 {request.providerDetails?.serviceAreas?.[0]?.address ?? "Location not set"}
+                    </p>
+                  </div>
+                  <button className="text-green-600 hover:text-green-700 flex items-center gap-1 text-sm transition">
+                    <Eye size={16} /> View
+                  </button>
                 </div>
-                <button className="text-green-600 hover:text-green-700 flex items-center gap-1 text-sm transition">
-                  <Eye size={16} /> View
-                </button>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredRequests.map((request) => {
+            const currentStatus = getVerificationStatus(request);
             const image =
               request.providerDetails?.portfolios?.[0]?.images?.[0] ||
               "/customer-service-interaction.png";
@@ -336,11 +338,9 @@ export default function AdminDashboardClient() {
                   />
                   <div className="absolute top-3 right-3">
                     <span
-                      className={`px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(
-                        request.status
-                      )}`}
+                      className={`px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(currentStatus)}`}
                     >
-                      {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                      {formatStatus(currentStatus)}
                     </span>
                   </div>
                 </div>
