@@ -46,18 +46,23 @@ const userSchema = new mongoose.Schema(
     location: {
       type: {
         type: String,
-        enum: ["Point"],
-        default: "Point",
+        enum: ['Point'],
+        default: 'Point'
       },
       coordinates: {
-        type: [Number], // [lng, lat]
+        type: [Number],
+        default: [85.3240, 27.7172], // <-- default coordinates (Kathmandu, Nepal)
         validate: {
-          validator: v => !v || v.length === 2,
-          message: "Coordinates must be [longitude, latitude]",
-        },
+          validator: function (v) {
+            return Array.isArray(v) && v.length === 2;
+          },
+          message: 'Coordinates must be [longitude, latitude]'
+        }
       },
-      address: String,
+      address: String
     },
+
+
 
     /* ================= PROVIDER DETAILS ================= */
     providerDetails: {
@@ -308,7 +313,10 @@ const userSchema = new mongoose.Schema(
 
 /* ================= INDEXES ================= */
 userSchema.index({ role: 1 });
-userSchema.index({ location: "2dsphere" });
+userSchema.index(
+  { 'location.coordinates': '2dsphere' },
+  { partialFilterExpression: { 'location.coordinates': { $exists: true } } }
+);
 userSchema.index({ "providerDetails.skills.name": 1 });
 userSchema.index({ "providerDetails.isVerified": 1 });
 userSchema.index({ "ratings.average": -1 });

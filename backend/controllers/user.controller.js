@@ -41,41 +41,22 @@ exports.loginLimiter = loginLimiter;
 // @route   POST /api/auth/signup
 // @access  Public
 exports.signup = async (req, res) => {
-  // Destructure body, including potential provider details if role is provider
-  const { fullName, email, password, phone, role, providerDetails } = req.body;
+  const { fullName, email, password, phone, role } = req.body;
 
   try {
-    // Validate input - fullName, email, password are always required
+    // Validate required fields
     if (!fullName || !email || !password) {
       return res.status(400).json({ message: "Missing required fields: fullName, email, password" });
     }
 
-    // Validate role if provided
-    if (role && !["customer", "provider", "admin"].includes(role)) {
-      return res.status(400).json({ message: "Invalid role specified. Use 'customer', 'provider', or 'admin'." });
+    // Validate role (if provided)
+    const validRoles = ["customer", "provider", "admin"];
+    if (role && !validRoles.includes(role)) {
+      return res.status(400).json({ message: "Invalid role. Use 'customer', 'provider', or 'admin'." });
     }
 
-    // For provider signup, validate essential provider details
-    if (role === 'provider') {
-      // Basic validation for provider details if provided during signup
-      // You might want more specific validation based on your requirements
-      if (providerDetails) {
-        // Example: Validate skills array if present
-        if (providerDetails.skills && !Array.isArray(providerDetails.skills)) {
-          return res.status(400).json({ message: "Provider skills must be an array." });
-        }
-        // Example: Validate hourlyRate if present
-        if (providerDetails.hourlyRate !== undefined && typeof providerDetails.hourlyRate !== 'number') {
-          return res.status(400).json({ message: "Provider hourlyRate must be a number." });
-        }
-        // Add more validations as needed for bio, experience, etc.
-      }
-    }
-
-    // Normalize email
+    // Normalize and validate email
     const normalizedEmail = email.toLowerCase().trim();
-
-    // Validate email format
     if (!validator.isEmail(normalizedEmail)) {
       return res.status(400).json({ message: "Invalid email format" });
     }
@@ -89,7 +70,7 @@ exports.signup = async (req, res) => {
       });
     }
 
-    // Check if user already exists
+    // Check for existing user
     const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       return res.status(400).json({ message: "Email already in use" });
@@ -98,28 +79,15 @@ exports.signup = async (req, res) => {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Prepare user data object
     const userData = {
-      fullName,
+      fullName: fullName.trim(),
       email: normalizedEmail,
       password: hashedPassword,
-      phone: phone || undefined, // Only set if provided in request
-      role: role || "customer", // Default to 'customer' if not specified
+      ...(phone && { phone: phone.trim() }), // Optional
+      role: role || "customer", // Default to 'customer'
     };
 
-    // Add provider details only if role is provider and details are provided
-    if (role === 'provider' && providerDetails) {
-      // Only add fields that are defined in providerDetails
-      userData.providerDetails = {};
-      if (providerDetails.bio) userData.providerDetails.bio = providerDetails.bio;
-      if (providerDetails.skills) userData.providerDetails.skills = providerDetails.skills;
-      if (providerDetails.hourlyRate !== undefined) userData.providerDetails.hourlyRate = providerDetails.hourlyRate;
-      if (providerDetails.experienceYears !== undefined) userData.providerDetails.experienceYears = providerDetails.experienceYears;
-      // Note: isVerified and kycVerified default to false in the schema
-      // Add other providerDetails fields as needed (certifications, portfolio, etc.)
-    }
-
-    // Create new user
+    // Create and save user
     const newUser = new User(userData);
     await newUser.save();
 
@@ -130,10 +98,10 @@ exports.signup = async (req, res) => {
       { expiresIn: process.env.JWT_EXPIRES_IN || "1d" }
     );
 
-    // Set token in HTTP-only cookie
+    // Set secure cookie
     res.cookie("token", token, cookieOptions);
 
-    // Send success response (exclude password from response)
+    // Send success response (exclude sensitive/unused fields)
     res.status(201).json({
       message: "User created successfully",
       user: {
@@ -141,27 +109,25 @@ exports.signup = async (req, res) => {
         fullName: newUser.fullName,
         email: newUser.email,
         role: newUser.role,
-        phone: newUser.phone,
-        // Include provider details in response if the user is a provider
-        ...(newUser.role === 'provider' && {
-          providerDetails: {
-            bio: newUser.providerDetails.bio,
-            skills: newUser.providerDetails.skills,
-            hourlyRate: newUser.providerDetails.hourlyRate,
-            experienceYears: newUser.providerDetails.experienceYears,
-            isVerified: newUser.providerDetails.isVerified,
-            kycVerified: newUser.providerDetails.kycVerified,
-          }
-        })
+        phone: newUser.phone || null,
       },
     });
+
   } catch (error) {
     console.error("Signup Error:", error);
-    // Check for specific Mongoose validation errors
-    if (error.name === 'ValidationError') {
-      const messages = Object.values(error.errors).map(err => err.message);
-      return res.status(400).json({ message: 'Validation Error', details: messages });
+
+    // Handle duplicate key (e.g., race condition on email)
+    if (error.code === 11000) {
+      return res.status(400).json({ message: "Email already in use" });
     }
+
+    // Handle Mongoose validation errors
+    if (error.name === "ValidationError") {
+      const messages = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ message: "Validation failed", details: messages });
+    }
+
+    // General server error
     res.status(500).json({ message: "Server error during signup. Please try again later." });
   }
 };
@@ -232,6 +198,8 @@ exports.login = async (req, res) => {
         role: userWithPassword.role,
         phone: userWithPassword.phone,
         isActive: userWithPassword.isActive,
+        kycVerified: userWithPassword.providerDetails.kycVerified,
+
         ...(userWithPassword.role === 'provider' && {
           providerDetails: {
             bio: userWithPassword.providerDetails.bio,
@@ -239,7 +207,6 @@ exports.login = async (req, res) => {
             hourlyRate: userWithPassword.providerDetails.hourlyRate,
             experienceYears: userWithPassword.providerDetails.experienceYears,
             isVerified: userWithPassword.providerDetails.isVerified,
-            kycVerified: userWithPassword.providerDetails.kycVerified,
           }
         })
       },
@@ -500,7 +467,7 @@ exports.updateProviderOnboarding = async (req, res) => {
       return res.status(403).json({ message: "Only providers can complete onboarding" });
     }
 
-    const { 
+    const {
       headline,
       workDescription,
       skills,
@@ -606,7 +573,7 @@ exports.updateProviderOnboarding = async (req, res) => {
         validatedPortfolios.push({
           title: p.title.trim(),
           description: (p.description || '').trim(),
-          images: Array.isArray(p.images) 
+          images: Array.isArray(p.images)
             ? p.images.filter(img => typeof img === 'string').slice(0, 10)
             : []
         });
