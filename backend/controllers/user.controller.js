@@ -1,5 +1,5 @@
 // controllers/authController.js
-const User = require("../models/user.model"); // Adjust path as needed
+const User = require("../models/user.model");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const rateLimit = require("express-rate-limit");
@@ -11,57 +11,52 @@ require("dotenv").config();
 // Cookie options
 const cookieOptions = {
   httpOnly: true,
-  secure: false, // because localhost is HTTP
-  sameSite: "lax", // ← critical fix
+  secure: false,
+  sameSite: "lax",
   maxAge: 24 * 60 * 60 * 1000,
 };
 
 // Rate limiters
 const signupLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 3, // 3 attempts per IP
+  windowMs: 60 * 60 * 1000,
+  max: 3,
   message: { message: "Too many signups from this IP, please try again later." },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // 5 attempts
+  windowMs: 15 * 60 * 1000,
+  max: 5,
   message: { message: "Too many login attempts. Please try again later." },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-// Middleware exports for routes
 exports.signupLimiter = signupLimiter;
 exports.loginLimiter = loginLimiter;
 
-// @desc    Register a new user (Customer or Provider)
+// @desc    Register a new user
 // @route   POST /api/auth/signup
 // @access  Public
 exports.signup = async (req, res) => {
   const { fullName, email, password, phone, role } = req.body;
 
   try {
-    // Validate required fields
     if (!fullName || !email || !password) {
       return res.status(400).json({ message: "Missing required fields: fullName, email, password" });
     }
 
-    // Validate role (if provided)
     const validRoles = ["customer", "provider", "admin"];
     if (role && !validRoles.includes(role)) {
       return res.status(400).json({ message: "Invalid role. Use 'customer', 'provider', or 'admin'." });
     }
 
-    // Normalize and validate email
     const normalizedEmail = email.toLowerCase().trim();
     if (!validator.isEmail(normalizedEmail)) {
       return res.status(400).json({ message: "Invalid email format" });
     }
 
-    // Validate password strength
     const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
     if (!passwordRegex.test(password)) {
       return res.status(400).json({
@@ -70,38 +65,32 @@ exports.signup = async (req, res) => {
       });
     }
 
-    // Check for existing user
     const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       return res.status(400).json({ message: "Email already in use" });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const userData = {
       fullName: fullName.trim(),
       email: normalizedEmail,
       password: hashedPassword,
-      ...(phone && { phone: phone.trim() }), // Optional
-      role: role || "customer", // Default to 'customer'
+      ...(phone && { phone: phone.trim() }),
+      role: role || "customer",
     };
 
-    // Create and save user
     const newUser = new User(userData);
     await newUser.save();
 
-    // Generate JWT token
     const token = jwt.sign(
       { id: newUser._id, role: newUser.role },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || "1d" }
     );
 
-    // Set secure cookie
     res.cookie("token", token, cookieOptions);
 
-    // Send success response (exclude sensitive/unused fields)
     res.status(201).json({
       message: "User created successfully",
       user: {
@@ -116,100 +105,83 @@ exports.signup = async (req, res) => {
   } catch (error) {
     console.error("Signup Error:", error);
 
-    // Handle duplicate key (e.g., race condition on email)
     if (error.code === 11000) {
       return res.status(400).json({ message: "Email already in use" });
     }
 
-    // Handle Mongoose validation errors
     if (error.name === "ValidationError") {
       const messages = Object.values(error.errors).map(err => err.message);
       return res.status(400).json({ message: "Validation failed", details: messages });
     }
 
-    // General server error
     res.status(500).json({ message: "Server error during signup. Please try again later." });
   }
 };
 
-// @desc    Authenticate user & get token
+// @desc    Login
 // @route   POST /api/auth/login
 // @access  Public
 exports.login = async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    // Validate input
     if (!email || !password) {
       return res.status(400).json({ message: "Missing email or password" });
     }
 
-    // Normalize email
     const normalizedEmail = email.toLowerCase().trim();
-
-    // Validate email format
     if (!validator.isEmail(normalizedEmail)) {
       return res.status(400).json({ message: "Invalid email format" });
     }
 
-    // Find user by email, selecting only necessary fields for efficiency
-    // Explicitly exclude the password field
     const user = await User.findOne({ email: normalizedEmail }).select('-password');
-    if (!user) {
-      return res.status(400).json({ message: "Invalid credentials - User not found" });
+    if (!user || !user.isActive) {
+      return res.status(400).json({ message: "Invalid credentials or inactive account" });
     }
 
-    // Check if user account is active
-    if (!user.isActive) {
-      return res.status(400).json({ message: "Account is inactive. Please contact support." });
-    }
-
-    // Find user by email, retrieving the password for comparison
     const userWithPassword = await User.findOne({ email: normalizedEmail }).select('+password');
     if (!userWithPassword) {
-      // This should ideally not happen if the first query found a user, but added for safety
-      return res.status(400).json({ message: "Invalid credentials - User not found" });
+      return res.status(400).json({ message: "Invalid credentials" });
     }
 
-    // Check password using the user document that includes the password
     const isMatch = await bcrypt.compare(password, userWithPassword.password);
     if (!isMatch) {
-      return res.status(400).json({ message: "Invalid credentials - Password incorrect" });
+      return res.status(400).json({ message: "Invalid credentials" });
     }
 
-    // Generate JWT token
     const token = jwt.sign(
       { id: userWithPassword._id, role: userWithPassword.role },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || "1d" }
     );
 
-    // Set token in HTTP-only cookie (optional, can keep for security)
     res.cookie("token", token, cookieOptions);
 
-    // Send success response including the token
+    // ✅ FIXED: Use 'rate' instead of 'hourlyRate'
+    const responseUser = {
+      id: userWithPassword._id,
+      fullName: userWithPassword.fullName,
+      email: userWithPassword.email,
+      role: userWithPassword.role,
+      phone: userWithPassword.phone,
+      isActive: userWithPassword.isActive,
+      kycVerified: userWithPassword.kycVerified,
+    };
+
+    if (userWithPassword.role === 'provider') {
+      responseUser.providerDetails = {
+        bio: userWithPassword.providerDetails?.bio,
+        skills: userWithPassword.providerDetails?.skills,
+        rate: userWithPassword.providerDetails?.rate, // ✅ CORRECT FIELD
+        experienceYears: userWithPassword.providerDetails?.experienceYears,
+        isVerified: userWithPassword.providerDetails?.isVerified,
+      };
+    }
+
     res.json({
       message: "Login successful",
-      token, // <-- add this line
-      user: {
-        id: userWithPassword._id,
-        fullName: userWithPassword.fullName,
-        email: userWithPassword.email,
-        role: userWithPassword.role,
-        phone: userWithPassword.phone,
-        isActive: userWithPassword.isActive,
-        kycVerified: userWithPassword.providerDetails.kycVerified,
-
-        ...(userWithPassword.role === 'provider' && {
-          providerDetails: {
-            bio: userWithPassword.providerDetails.bio,
-            skills: userWithPassword.providerDetails.skills,
-            hourlyRate: userWithPassword.providerDetails.hourlyRate,
-            experienceYears: userWithPassword.providerDetails.experienceYears,
-            isVerified: userWithPassword.providerDetails.isVerified,
-          }
-        })
-      },
+      token,
+      user: responseUser,
     });
 
   } catch (error) {
@@ -218,17 +190,15 @@ exports.login = async (req, res) => {
   }
 };
 
-// @desc    Logout user & clear token
+// @desc    Logout
 // @route   POST /api/auth/logout
 // @access  Public
 exports.logout = (req, res) => {
-  // Clear the 'token' cookie using the same options it was set with
   res.clearCookie("token", cookieOptions);
   res.json({ message: "Logged out successfully" });
 };
 
-
-// @desc    Update user profile (authenticated users only)
+// @desc    Update user profile
 // @route   PATCH /api/auth/profile
 // @access  Private
 exports.updateUser = async (req, res) => {
@@ -238,16 +208,12 @@ exports.updateUser = async (req, res) => {
   }
 
   try {
-    // Start with an empty update object
     const updateObj = {};
 
-    // Allow dot-notation fields (e.g., "providerDetails.bio")
-    const allowedTopLevel = ['fullName', 'email', 'phone', 'avatar', 'location'];
-    const allowedNested = ['providerDetails.bio']; // Add more if needed, e.g., 'providerDetails.skills'
+    // ✅ Allow top-level 'bio' (universal)
+    const allowedTopLevel = ['fullName', 'email', 'phone', 'avatar', 'location', 'bio'];
 
-    // Handle each field in req.body
     for (const [key, value] of Object.entries(req.body)) {
-      // 1. Handle top-level simple fields
       if (allowedTopLevel.includes(key)) {
         if (key === 'fullName') {
           if (typeof value !== 'string' || value.trim().length < 2) {
@@ -274,7 +240,6 @@ exports.updateUser = async (req, res) => {
           updateObj.avatar = value.trim();
         }
         else if (key === 'location') {
-          // 🌍 SPECIAL: Handle location string → geocode
           if (typeof value === 'string' && value.trim()) {
             const geo = await geocodeLocation(value.trim());
             if (!geo) {
@@ -286,29 +251,22 @@ exports.updateUser = async (req, res) => {
               address: geo.address,
             };
           } else if (value === null || value === '') {
-            updateObj.location = undefined; // clear location
+            updateObj.location = undefined;
           }
-          // If value is already a GeoJSON object (advanced), you could allow it — but not needed for now
+        }
+        else if (key === 'bio') {
+          if (typeof value !== 'string') {
+            return res.status(400).json({ message: "Bio must be a string." });
+          }
+          updateObj.bio = value.trim().substring(0, 500);
         }
       }
-      // 2. Handle nested dot-notation fields
-      else if (key === 'providerDetails.bio') {
-        const user = await User.findById(userId).select('role');
-        if (!user || user.role !== 'provider') {
-          return res.status(403).json({ message: "Only providers can update bio." });
-        }
-        if (typeof value !== 'string') {
-          return res.status(400).json({ message: "Bio must be a string." });
-        }
-        updateObj['providerDetails.bio'] = value.trim();
-      }
-      // ⚠️ Reject any other field (security)
+      // ❌ REMOVED: providerDetails.bio — it doesn't exist in schema
       else {
         return res.status(400).json({ message: `Invalid or unsupported update field: ${key}` });
       }
     }
 
-    // Prevent protected field updates (extra safety)
     const protectedPaths = [
       'password', 'role', 'isActive', 'isSuspended', 'isEmailVerified',
       'providerDetails.isVerified', 'providerDetails.kycVerified',
@@ -321,7 +279,6 @@ exports.updateUser = async (req, res) => {
       }
     }
 
-    // Perform the update
     const updatedUser = await User.findByIdAndUpdate(
       userId,
       { $set: updateObj },
@@ -332,7 +289,6 @@ exports.updateUser = async (req, res) => {
       return res.status(404).json({ message: "User not found." });
     }
 
-    // Build safe response
     const response = {
       id: updatedUser._id,
       fullName: updatedUser.fullName,
@@ -340,6 +296,7 @@ exports.updateUser = async (req, res) => {
       phone: updatedUser.phone,
       avatar: updatedUser.avatar,
       role: updatedUser.role,
+      bio: updatedUser.bio, // ✅ Include top-level bio
       location: updatedUser.location?.coordinates ? {
         type: 'Point',
         coordinates: updatedUser.location.coordinates,
@@ -351,7 +308,7 @@ exports.updateUser = async (req, res) => {
       response.providerDetails = {
         bio: updatedUser.providerDetails?.bio,
         skills: updatedUser.providerDetails?.skills,
-        hourlyRate: updatedUser.providerDetails?.hourlyRate,
+        rate: updatedUser.providerDetails?.rate, // ✅ CORRECT
         experienceYears: updatedUser.providerDetails?.experienceYears,
       };
     }
@@ -380,7 +337,7 @@ exports.updateUser = async (req, res) => {
   }
 };
 
-// @desc    Change user password
+// @desc    Change password
 // @route   PATCH /api/auth/change-password
 // @access  Private
 exports.changePassword = async (req, res) => {
@@ -391,7 +348,6 @@ exports.changePassword = async (req, res) => {
 
   const { oldPassword, newPassword } = req.body;
 
-  // Validate input
   if (!oldPassword || !newPassword) {
     return res.status(400).json({ message: "Both old and new passwords are required." });
   }
@@ -400,7 +356,6 @@ exports.changePassword = async (req, res) => {
     return res.status(400).json({ message: "Passwords must be strings." });
   }
 
-  // Validate new password strength (same as signup)
   const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
   if (!passwordRegex.test(newPassword)) {
     return res.status(400).json({
@@ -410,29 +365,23 @@ exports.changePassword = async (req, res) => {
   }
 
   try {
-    // Fetch user with password
-    const user = await User.findById(userId).select('+password'); // '+password' to include it
+    const user = await User.findById(userId).select('+password');
     if (!user) {
       return res.status(404).json({ message: "User not found." });
     }
 
-    // Verify old password
     const isMatch = await bcrypt.compare(oldPassword, user.password);
     if (!isMatch) {
       return res.status(400).json({ message: "Old password is incorrect." });
     }
 
-    // Prevent reusing same password
     if (await bcrypt.compare(newPassword, user.password)) {
       return res.status(400).json({ message: "New password must be different from the current one." });
     }
 
-    // Hash and update new password
     user.password = await bcrypt.hash(newPassword, 10);
     await user.save();
 
-    // ⚠️ Optional: Invalidate current session by issuing a new token
-    // (Not strictly needed since password hash changed, but good practice)
     const newToken = jwt.sign(
       { id: user._id, role: user.role },
       process.env.JWT_SECRET,
@@ -448,7 +397,7 @@ exports.changePassword = async (req, res) => {
   }
 };
 
-// @desc    Complete or update provider onboarding details
+// @desc    Update provider onboarding
 // @route   PATCH /api/auth/onboarding
 // @access  Private (Provider only)
 exports.updateProviderOnboarding = async (req, res) => {
@@ -458,7 +407,6 @@ exports.updateProviderOnboarding = async (req, res) => {
   }
 
   try {
-    // Fetch user and verify they are a provider
     const user = await User.findById(userId).select('role');
     if (!user) {
       return res.status(404).json({ message: "User not found" });
@@ -483,15 +431,29 @@ exports.updateProviderOnboarding = async (req, res) => {
       verificationStatus
     } = req.body;
 
-    // 🔒 Prevent changing verification status from frontend (security)
+    // 🔒 Security: Only allow 'incomplete' or 'pending'
     if (verificationStatus && !['incomplete', 'pending'].includes(verificationStatus)) {
       return res.status(400).json({ message: "Invalid verification status" });
     }
 
-    // ✅ Build update object with validation
+    // ✅ COMPLETENESS CHECK: Require fields when submitting for review
+    if (verificationStatus === 'pending') {
+      const requiredFields = ['headline', 'workDescription', 'skills', 'serviceAreas'];
+      for (const field of requiredFields) {
+        if (
+          req.body[field] === undefined ||
+          (Array.isArray(req.body[field]) && req.body[field].length === 0) ||
+          (typeof req.body[field] === 'string' && !req.body[field].trim())
+        ) {
+          return res.status(400).json({
+            message: `Missing required field for submission: ${field}`
+          });
+        }
+      }
+    }
+
     const update = {};
 
-    // --- Bio & Headline ---
     if (headline !== undefined) {
       if (typeof headline !== 'string' || headline.trim().length > 120) {
         return res.status(400).json({ message: "Headline must be a string (max 120 chars)" });
@@ -506,7 +468,6 @@ exports.updateProviderOnboarding = async (req, res) => {
       update['providerDetails.workDescription'] = workDescription.trim();
     }
 
-    // --- Skills ---
     if (skills !== undefined) {
       if (!Array.isArray(skills)) {
         return res.status(400).json({ message: "Skills must be an array" });
@@ -525,7 +486,6 @@ exports.updateProviderOnboarding = async (req, res) => {
       update['providerDetails.skills'] = validatedSkills;
     }
 
-    // --- Rates ---
     const numericFields = [
       { key: 'rate', min: 0 },
       { key: 'minCallOutFee', min: 0 },
@@ -545,14 +505,13 @@ exports.updateProviderOnboarding = async (req, res) => {
       }
     }
 
-    // --- Fixed Rate Projects ---
     if (fixedRateProjects !== undefined) {
       if (!Array.isArray(fixedRateProjects)) {
         return res.status(400).json({ message: "Fixed rate projects must be an array" });
       }
       const validatedProjects = [];
       for (const proj of fixedRateProjects) {
-        if (!proj.name || !proj.details || proj.rate == null) continue; // skip invalid
+        if (!proj.name || !proj.details || proj.rate == null) continue;
         validatedProjects.push({
           name: proj.name.trim(),
           details: proj.details.trim(),
@@ -562,7 +521,6 @@ exports.updateProviderOnboarding = async (req, res) => {
       update['providerDetails.fixedRateProjects'] = validatedProjects;
     }
 
-    // --- Portfolios ---
     if (portfolios !== undefined) {
       if (!Array.isArray(portfolios)) {
         return res.status(400).json({ message: "Portfolios must be an array" });
@@ -581,7 +539,6 @@ exports.updateProviderOnboarding = async (req, res) => {
       update['providerDetails.portfolios'] = validatedPortfolios;
     }
 
-    // --- Service Areas ---
     if (serviceAreas !== undefined) {
       if (!Array.isArray(serviceAreas) || serviceAreas.length === 0) {
         return res.status(400).json({ message: "At least one service area is required" });
@@ -602,7 +559,6 @@ exports.updateProviderOnboarding = async (req, res) => {
       update['providerDetails.serviceAreas'] = validatedAreas;
     }
 
-    // --- Availability ---
     if (availabilityStatus !== undefined) {
       if (!['available', 'busy', 'offline'].includes(availabilityStatus)) {
         return res.status(400).json({ message: "Invalid availability status" });
@@ -610,7 +566,6 @@ exports.updateProviderOnboarding = async (req, res) => {
       update['providerDetails.availabilityStatus'] = availabilityStatus;
     }
 
-    // --- Verification Status (only allow transition to 'pending') ---
     if (verificationStatus === 'pending') {
       update['providerDetails.verificationStatus'] = 'pending';
       update['providerDetails.submittedAt'] = new Date();
@@ -619,7 +574,6 @@ exports.updateProviderOnboarding = async (req, res) => {
       update['providerDetails.submittedAt'] = undefined;
     }
 
-    // Perform the update
     const updatedUser = await User.findByIdAndUpdate(
       userId,
       { $set: update },
@@ -630,7 +584,6 @@ exports.updateProviderOnboarding = async (req, res) => {
       return res.status(404).json({ message: "User not found after update" });
     }
 
-    // Return only providerDetails in response for efficiency
     res.json({
       message: "Onboarding details updated successfully",
       providerDetails: updatedUser.providerDetails
@@ -645,5 +598,104 @@ exports.updateProviderOnboarding = async (req, res) => {
       });
     }
     res.status(500).json({ message: "Server error during onboarding update" });
+  }
+};
+
+// @desc    Get current user profile
+// @route   GET /api/auth/profile
+// @access  Private
+exports.getProfile = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('-password');
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Build response (same as in updateUser)
+    const response = {
+      id: user._id,
+      fullName: user.fullName,
+      email: user.email,
+      phone: user.phone,
+      avatar: user.avatar,
+      role: user.role,
+      bio: user.bio,
+      kycVerified: user.kycVerified,
+      location: user.location?.coordinates ? {
+        type: 'Point',
+        coordinates: user.location.coordinates,
+        address: user.location.address
+      } : undefined,
+    };
+
+    if (user.role === 'provider') {
+      response.providerDetails = {
+        headline: user.providerDetails?.headline,
+        workDescription: user.providerDetails?.workDescription,
+        skills: user.providerDetails?.skills || [],
+        rate: user.providerDetails?.rate,
+        minCallOutFee: user.providerDetails?.minCallOutFee,
+        travelFeePerKm: user.providerDetails?.travelFeePerKm,
+        travelThresholdKm: user.providerDetails?.travelThresholdKm,
+        fixedRateProjects: user.providerDetails?.fixedRateProjects || [],
+        availabilityStatus: user.providerDetails?.availabilityStatus,
+        portfolios: user.providerDetails?.portfolios || [],
+        serviceAreas: user.providerDetails?.serviceAreas || [],
+        experienceYears: user.providerDetails?.experienceYears,
+        verificationStatus: user.providerDetails?.verificationStatus || "incomplete",
+        isVerified: user.providerDetails?.isVerified,
+      };
+    }
+
+    if (user.role === 'customer') {
+      response.customerPreferences = {
+        favoriteProviders: user.customerPreferences?.favoriteProviders,
+        preferredCategories: user.customerPreferences?.preferredCategories,
+      };
+    }
+
+    res.json({ user: response });
+  } catch (error) {
+    console.error("Get Profile Error:", error);
+    res.status(500).json({ message: "Server error fetching profile" });
+  }
+};
+
+
+// @desc    Get public list of verified providers
+// @route   GET /api/users/providers
+// @access  Public
+exports.getPublicProviders = async (req, res) => {
+  try {
+    const providers = await User.find({
+      role: "provider",
+      "providerDetails.isVerified": true,
+      "providerDetails.isProfilePublic": true,
+      isActive: true,
+      deletedAt: { $exists: false }
+    })
+      .select('fullName avatar providerDetails ratings')
+      .limit(50); // Adjust as needed
+
+    // In getPublicProviders
+    const formatted = providers.map(user => ({
+      id: user._id.toString(),
+      name: user.fullName,
+      avatar: user.avatar || "/placeholder.svg",
+      // 👇 HEADLINE goes here (as the prominent subheading)
+      headline: user.providerDetails?.headline || "Professional service provider",
+      // 👇 First skill for filtering/search, but NOT displayed prominently
+      primarySkill: user.providerDetails?.skills?.[0]?.name || "General Service",
+      experience: user.providerDetails?.experienceYears || 0,
+      rating: user.ratings?.average || 0,
+      reviewsCount: user.ratings?.count || 0,
+      // Optional: full bio or workDescription if needed later
+      bio: user.providerDetails?.workDescription || ""
+    }));
+
+    res.json({ providers: formatted });
+  } catch (error) {
+    console.error("Fetch providers error:", error);
+    res.status(500).json({ message: "Failed to fetch providers" });
   }
 };

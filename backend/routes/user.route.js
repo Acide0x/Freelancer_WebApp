@@ -18,4 +18,11 @@ router.patch("/change-password", verifyAuth, userController.changePassword);
 // NEW: Provider onboarding route (protected)
 router.patch("/onboarding", verifyAuth, userController.updateProviderOnboarding);
 
+// NEW: Get current user profile (protected)
+router.get("/profile", verifyAuth, userController.getProfile);
+
+router.get('/providers', userController.getPublicProviders);
+
+
+
 module.exports = router;
