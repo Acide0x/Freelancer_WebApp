@@ -165,15 +165,18 @@ const userSchema = new mongoose.Schema(
           trim: true,
           maxlength: 500,
         },
-        images: [{
-          type: String, // Array of image URLs
+        images: {
+          type: [{
+            type: String,
+            trim: true, // auto-trim whitespace!
+          }],
           validate: {
-            validator: function (v) {
-              return !v || v.length <= 10;
+            validator: function (imagesArray) {
+              return !imagesArray || imagesArray.length <= 10;
             },
             message: 'A portfolio item can have at most 10 images'
           }
-        }]
+        }
       }],
 
       // === Service Area (Step 5) ===

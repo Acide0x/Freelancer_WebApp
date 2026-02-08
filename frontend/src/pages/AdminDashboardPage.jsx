@@ -1,5 +1,6 @@
 // src/pages/admin/AdminDashboardClient.jsx
 import { useState, useEffect } from "react";
+import { Badge } from "@/components/ui/badge";
 import {
   Search,
   Grid3x3,
@@ -133,13 +134,13 @@ export default function AdminDashboardClient() {
         prev.map((req) =>
           req._id === id
             ? {
-                ...req,
-                providerDetails: {
-                  ...req.providerDetails,
-                  verificationStatus: "approved",
-                  isVerified: true,
-                },
-              }
+              ...req,
+              providerDetails: {
+                ...req.providerDetails,
+                verificationStatus: "approved",
+                isVerified: true,
+              },
+            }
             : req
         )
       );
@@ -160,13 +161,13 @@ export default function AdminDashboardClient() {
         prev.map((req) =>
           req._id === id
             ? {
-                ...req,
-                providerDetails: {
-                  ...req.providerDetails,
-                  verificationStatus: "rejected",
-                  isVerified: false,
-                },
-              }
+              ...req,
+              providerDetails: {
+                ...req.providerDetails,
+                verificationStatus: "rejected",
+                isVerified: false,
+              },
+            }
             : req
         )
       );
@@ -334,8 +335,9 @@ export default function AdminDashboardClient() {
                     src={image}
                     alt={request.businessName || request.name}
                     className="w-full h-full object-cover"
-                    onError={(e) => (e.target.src = "/placeholder.svg")}
-                  />
+                    onError={(e) => {
+                      e.target.style.display = 'none';
+                    }} />
                   <div className="absolute top-3 right-3">
                     <span
                       className={`px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(currentStatus)}`}
@@ -506,35 +508,42 @@ export default function AdminDashboardClient() {
                 <div>
                   <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-3">
                     <Lock size={16} className="text-red-500" />
-                    Portfolio (Read-only)
+                    Portfolio ({selectedRequest.providerDetails.portfolios.length} projects)
                   </label>
-                  <div className="space-y-3">
-                    {(selectedRequest.providerDetails.portfolios || []).map(
-                      (portfolio, idx) => (
-                        <div
-                          key={idx}
-                          className="bg-gray-50 border border-red-200 rounded-lg p-3"
-                        >
-                          <h4 className="font-medium text-gray-900">{portfolio.title}</h4>
-                          <p className="text-sm text-gray-700 mt-1">
-                            {portfolio.description}
-                          </p>
-                          {portfolio.images?.length > 0 && (
-                            <div className="mt-3 flex gap-2 flex-wrap">
-                              {portfolio.images.map((img, imgIdx) => (
-                                <img
-                                  key={imgIdx}
-                                  src={img}
-                                  alt="Portfolio"
-                                  className="w-16 h-16 rounded object-cover border border-gray-300"
-                                  onError={(e) => (e.target.src = "/placeholder.svg")}
-                                />
-                              ))}
-                            </div>
-                          )}
+                  <div className="space-y-4">
+                    {selectedRequest.providerDetails.portfolios.map((portfolio, idx) => (
+                      <div key={idx} className="bg-gray-50 border border-red-200 rounded-lg p-4">
+                        <div className="flex justify-between items-start mb-2">
+                          <h4 className="font-bold text-gray-900">{portfolio.title || `Project ${idx + 1}`}</h4>
+                          <Badge variant="outline" className="text-xs">
+                            {portfolio.images?.length || 0} image(s)
+                          </Badge>
                         </div>
-                      )
-                    )}
+
+                        {portfolio.description && (
+                          <p className="text-sm text-gray-700 mb-3">{portfolio.description}</p>
+                        )}
+
+                        {/* 🖼️ Image Gallery */}
+                        {portfolio.images?.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {portfolio.images.map((img, imgIdx) => (
+                              <div key={imgIdx} className="relative group">
+                                <img
+                                  src={img}
+                                  alt={`Portfolio ${idx + 1} - ${imgIdx + 1}`}
+                                  className="w-20 h-20 object-cover rounded border border-gray-300 hover:opacity-75 transition-opacity"
+                                  onError={(e) => (e.target.style.display = 'none')}
+                                />
+                                {/* Optional: Zoom on hover (future enhancement) */}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs italic text-gray-500">No images uploaded</p>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
