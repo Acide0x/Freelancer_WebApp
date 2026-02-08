@@ -20,9 +20,9 @@ exports.getPendingProviders = async (req, res) => {
     });
   } catch (error) {
     console.error("Error fetching pending providers:", error);
-    return res.status(500).json({ 
-      success: false, 
-      message: "Server error while fetching provider applications" 
+    return res.status(500).json({
+      success: false,
+      message: "Server error while fetching provider applications"
     });
   }
 };
@@ -35,17 +35,18 @@ exports.updateProviderVerification = async (req, res) => {
   const { action, rejectionReason } = req.body;
 
   if (!["approve", "reject"].includes(action)) {
-    return res.status(400).json({ 
-      success: false, 
-      message: "Invalid action. Use 'approve' or 'reject'." 
+    return res.status(400).json({
+      success: false,
+      message: "Invalid action. Use 'approve' or 'reject'."
     });
   }
 
-  if (action === "reject") {
-    if (!rejectionReason || typeof rejectionReason !== "string" || rejectionReason.trim().length < 10) {
+  // Optional: Validate rejectionReason only if provided (no length requirement)
+  if (action === "reject" && rejectionReason !== undefined) {
+    if (typeof rejectionReason !== "string") {
       return res.status(400).json({
         success: false,
-        message: "Rejection reason is required and must be at least 10 characters."
+        message: "Rejection reason must be a string if provided."
       });
     }
   }
@@ -53,23 +54,23 @@ exports.updateProviderVerification = async (req, res) => {
   try {
     const user = await User.findById(userId);
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "User not found" 
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
       });
     }
 
     if (user.role !== "provider") {
-      return res.status(400).json({ 
-        success: false, 
-        message: "User is not a provider" 
+      return res.status(400).json({
+        success: false,
+        message: "User is not a provider"
       });
     }
 
     if (!user.providerDetails) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Provider details not initialized" 
+      return res.status(400).json({
+        success: false,
+        message: "Provider details not initialized"
       });
     }
 
@@ -89,7 +90,10 @@ exports.updateProviderVerification = async (req, res) => {
     } else if (action === "reject") {
       user.providerDetails.verificationStatus = "rejected";
       user.providerDetails.isVerified = false;
-      user.providerDetails.rejectionReason = rejectionReason.trim();
+      // Store trimmed string or empty string if not provided
+      user.providerDetails.rejectionReason = typeof rejectionReason === 'string'
+        ? rejectionReason.trim()
+        : '';
     }
 
     await user.save();
@@ -101,11 +105,11 @@ exports.updateProviderVerification = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: `Provider ${action}ed successfully`,
-      data: { // ✅ Fixed: added "data" property
+      data: {
         id: user._id,
         verificationStatus: user.providerDetails.verificationStatus,
-        ...(action === "reject" && { 
-          rejection_reason: user.providerDetails.rejectionReason 
+        ...(action === "reject" && {
+          rejection_reason: user.providerDetails.rejectionReason || ''
         })
       },
     });
@@ -129,9 +133,9 @@ exports.updateProviderVerification = async (req, res) => {
       });
     }
 
-    return res.status(500).json({ 
-      success: false, 
-      message: "Server error during verification update" 
+    return res.status(500).json({
+      success: false,
+      message: "Server error during verification update"
     });
   }
 };
