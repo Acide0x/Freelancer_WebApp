@@ -1,6 +1,4 @@
 // src/components/MyProfile/ProfileTab.jsx
-"use client";
-
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -68,14 +66,34 @@ export default function ProfileTab({ profile: initialProfile, onUpdateProfile, o
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleAvatarUpload = (e) => {
+  const handleAvatarUpload = async (e) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormData((prev) => ({ ...prev, avatar: reader.result }));
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast.error("Please upload an image file (JPEG, PNG, etc.)");
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image must be smaller than 5MB");
+      return;
+    }
+
+    try {
+      const formData = new FormData();
+      formData.append("image", file);
+
+      const response = await api.post("/upload/image", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      const cloudinaryUrl = response.data.url;
+      setFormData((prev) => ({ ...prev, avatar: cloudinaryUrl }));
+      toast.success("Avatar uploaded!");
+    } catch (error) {
+      console.error("Avatar upload failed:", error);
+      toast.error(error.response?.data?.message || "Failed to upload avatar");
     }
   };
 
@@ -100,7 +118,7 @@ export default function ProfileTab({ profile: initialProfile, onUpdateProfile, o
     }
 
     // Bio (provider only)
-    const currentBio = profile.bio || 
+    const currentBio = profile.bio ||
       (profile.role === "provider" ? (profile.providerDetails?.bio || "No bio yet.") : "No bio yet.");
     if (formData.bio !== currentBio && profile.role === "provider") {
       payload["providerDetails.bio"] = formData.bio;
@@ -124,9 +142,9 @@ export default function ProfileTab({ profile: initialProfile, onUpdateProfile, o
         avatar: data.user.avatar || "/placeholder.svg",
         joinDate: data.user.createdAt
           ? new Date(data.user.createdAt).toLocaleDateString("en-US", {
-              year: "numeric",
-              month: "long",
-            })
+            year: "numeric",
+            month: "long",
+          })
           : "Unknown",
       };
 
