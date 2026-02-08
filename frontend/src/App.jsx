@@ -44,7 +44,7 @@ export default function App() {
         </main>
         <Footer />
         {/* ✅ Render Sonner Toaster once in the app */}
-        <Toaster position="top-right" richColors />
+        <Toaster position="bottom-center" richColors />
       </BrowserRouter>
     </AppProvider>
   );

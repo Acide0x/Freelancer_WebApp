@@ -61,7 +61,6 @@ function LocationSetter({ onLocationSelect, isReadOnly }) {
 function MapWithCoverage({ coordinates, radiusKm, address, onLocationSelect, isReadOnly }) {
   const defaultCenter = [27.7172, 85.3240]; // Kathmandu fallback
   const center = coordinates && coordinates.length === 2 ? [coordinates[0], coordinates[1]] : defaultCenter;
-
   return (
     <MapContainer
       center={center}
@@ -136,18 +135,25 @@ const defaultOnboardingData = {
 };
 
 const mergeWithDefaults = (incomingData) => {
+  // Preserve actual verificationStatus if it exists in incoming data
+  const actualStatus = incomingData?.verificationStatus || "incomplete";
+
   return {
     ...defaultOnboardingData,
     ...(incomingData || {}),
-    skills: Array.isArray(incomingData?.skills) ? incomingData.skills : [],
+    // 👇 CRITICAL: enforce real status
+    verificationStatus: actualStatus,
+
+    // Safely handle arrays
+    skills: Array.isArray(incomingData?.skills) ? [...incomingData.skills] : [],
     fixedRateProjects: Array.isArray(incomingData?.fixedRateProjects)
-      ? incomingData.fixedRateProjects
+      ? [...incomingData.fixedRateProjects]
       : [],
     portfolios: Array.isArray(incomingData?.portfolios)
-      ? incomingData.portfolios
+      ? [...incomingData.portfolios]
       : [],
     serviceAreas: Array.isArray(incomingData?.serviceAreas)
-      ? incomingData.serviceAreas
+      ? [...incomingData.serviceAreas]
       : [],
   };
 };
@@ -171,9 +177,12 @@ const saveOnboardingToBackend = async (onboardingData) => {
 // MAIN COMPONENT
 // -----------------------------
 export default function OnboardingTab({
+
   providerStatus: initialStatus,
   onboardingData: initialData,
 }) {
+  console.log("Initial data received:", initialData);
+
   const [currentStep, setCurrentStep] = useState(0);
   const [localOnboardingData, setLocalOnboardingData] = useState(
     mergeWithDefaults(initialData)
@@ -222,7 +231,10 @@ export default function OnboardingTab({
     setLocalOnboardingData((prev) => ({ ...prev, ...updates }));
   };
 
-  const isReadOnly = localOnboardingData.verificationStatus === "pending";
+  // 🔒 Enforce read-only for both 'pending' AND 'approved'
+  const isReadOnly =
+    localOnboardingData.verificationStatus === "pending" ||
+    localOnboardingData.verificationStatus === "approved";
 
   useEffect(() => {
     setLocalOnboardingData(mergeWithDefaults(initialData));
@@ -230,6 +242,7 @@ export default function OnboardingTab({
 
   const providerStatus = localOnboardingData.verificationStatus;
 
+  // Show special screen only for 'pending'
   if (providerStatus === "pending") {
     return (
       <Card className="max-w-2xl mx-auto p-12 bg-white border-gray-200 text-center rounded-3xl shadow">
@@ -275,6 +288,214 @@ export default function OnboardingTab({
     );
   }
 
+  // Show read-only summary for 'approved' users
+  if (providerStatus === "approved") {
+    const data = localOnboardingData;
+    return (
+      <Card className="max-w-4xl mx-auto p-10 bg-white border-gray-200 rounded-3xl shadow">
+        {/* Header */}
+        <div className="text-center mb-10">
+          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6 border border-green-200">
+            <CheckCircle2 className="w-10 h-10 text-green-600" />
+          </div>
+          <h2 className="text-3xl font-black mb-4 italic tracking-tighter uppercase">
+            Profile Approved ✅
+          </h2>
+          <p className="text-gray-500 max-w-md mx-auto font-medium">
+            Your provider profile is live! Below is your current public profile.
+          </p>
+        </div>
+
+        {/* Summary Content */}
+        <div className="space-y-10 mb-10">
+          {/* 1. Identity & Bio */}
+          <section className="space-y-4">
+            <h3 className="text-[10px] font-black uppercase tracking-widest text-gray-400 border-b border-gray-200 pb-2">
+              1. Identity & Bio
+            </h3>
+            <div className="p-6 bg-gray-50 border border-gray-200 rounded-2xl space-y-4">
+              <p className="text-2xl font-black italic tracking-tighter">
+                {data.headline || "Unspecified Headline"}
+              </p>
+              <p className="text-sm text-gray-600 leading-relaxed font-medium">
+                {data.workDescription || "No professional bio provided."}
+              </p>
+            </div>
+          </section>
+
+          {/* 2. Technical Skills */}
+          <section className="space-y-4">
+            <h3 className="text-[10px] font-black uppercase tracking-widest text-gray-400 border-b border-gray-200 pb-2">
+              2. Technical Skills
+            </h3>
+            <div className="grid gap-3">
+              {(data.skills || []).map((skill, i) => (
+                <div
+                  key={i}
+                  className="flex items-center justify-between p-4 bg-gray-50 border border-gray-200 rounded-xl"
+                >
+                  <span className="font-black text-gray-800">{skill.name}</span>
+                  <div className="flex gap-4 items-center">
+                    <Badge className="bg-gray-100 text-gray-800 italic font-black">
+                      Lvl {skill.proficiency}/10
+                    </Badge>
+                    <Badge variant="outline" className="border-gray-200 text-gray-500">
+                      {skill.years} Yrs
+                    </Badge>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* 3. Financial Framework */}
+          <section className="space-y-4">
+            <h3 className="text-[10px] font-black uppercase tracking-widest text-gray-400 border-b border-gray-200 pb-2">
+              3. Financial Framework
+            </h3>
+            <div className="grid md:grid-cols-3 gap-4">
+              <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
+                <p className="text-[8px] font-black text-gray-400 uppercase">Hourly Rate</p>
+                <p className="text-lg font-black">${data.rate}/hr</p>
+              </div>
+              <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
+                <p className="text-[8px] font-black text-gray-400 uppercase">Call-out</p>
+                <p className="text-lg font-black">${data.minCallOutFee}</p>
+              </div>
+              <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
+                <p className="text-[8px] font-black text-gray-400 uppercase">Travel Fee</p>
+                <p className="text-lg font-black">${data.travelFeePerKm}/km</p>
+              </div>
+            </div>
+            {(data.fixedRateProjects || []).length > 0 && (
+              <div className="space-y-3 mt-4">
+                <p className="text-[8px] font-black text-gray-400 uppercase">Fixed Projects</p>
+                {(data.fixedRateProjects || []).map((p, i) => (
+                  <div
+                    key={i}
+                    className="p-4 bg-gray-50 border border-gray-200 rounded-xl flex justify-between items-center"
+                  >
+                    <div className="space-y-1">
+                      <p className="font-bold text-sm">{p.name}</p>
+                      <p className="text-[10px] text-gray-500 line-clamp-1">{p.details}</p>
+                    </div>
+                    <p className="font-black text-lg">${p.rate}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* 4. Portfolio Showcase */}
+          {(data.portfolios || []).length > 0 && (
+            <section className="space-y-4">
+              <h3 className="text-[10px] font-black uppercase tracking-widest text-gray-400 border-b border-gray-200 pb-2">
+                4. Portfolio Showcase
+              </h3>
+              <div className="space-y-4">
+                {(data.portfolios || []).map((p, i) => (
+                  <div
+                    key={i}
+                    className="p-4 bg-gray-50 border border-gray-200 rounded-xl space-y-3"
+                  >
+                    <div className="flex justify-between items-center">
+                      <p className="font-black italic uppercase tracking-tighter text-sm">
+                        {p.title}
+                      </p>
+                      <Badge className="bg-gray-100 text-gray-500 text-[8px]">
+                        {p.images?.length || 0} Images
+                      </Badge>
+                    </div>
+                    {p.description && (
+                      <p className="text-sm text-gray-600">{p.description}</p>
+                    )}
+                    <div className="flex gap-2 overflow-x-auto pb-2">
+                      {p.images?.map((img, ii) => (
+                        <img
+                          key={ii}
+                          src={img}
+                          className="w-12 h-12 object-cover rounded-lg border border-gray-200 shrink-0"
+                          onError={(e) => (e.target.src = "/placeholder.svg")}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* 5. Service Areas */}
+          {(data.serviceAreas || []).length > 0 && (
+            <section className="space-y-4">
+              <h3 className="text-[10px] font-black uppercase tracking-widest text-gray-400 border-b border-gray-200 pb-2">
+                5. Service Areas
+              </h3>
+              <div className="space-y-4">
+                {(data.serviceAreas || []).map((area, i) => (
+                  <div
+                    key={i}
+                    className="p-4 bg-gray-50 border border-gray-200 rounded-xl space-y-3"
+                  >
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="font-black italic tracking-tighter text-sm">
+                          {area.address || "Unnamed Location"}
+                        </p>
+                        <p className="text-[10px] text-gray-500 mt-1">
+                          Serves up to <span className="font-bold">{area.radiusKm} km</span> radius
+                        </p>
+                      </div>
+                      {area.coordinates && (
+                        <Badge className="bg-blue-100 text-blue-800 text-[8px] font-black">
+                          Lat: {area.coordinates[1]?.toFixed(4)}, Lng: {area.coordinates[0]?.toFixed(4)}
+                        </Badge>
+                      )}
+                    </div>
+
+                    {/* Static Map Preview - OpenStreetMap (no API key) */}
+                    {area.coordinates && (
+                      <div className="mt-3 overflow-hidden rounded-lg border border-gray-200">
+                        <img
+                          src={`https://www.openstreetmap.org/staticmap?center=${area.coordinates[1]},${area.coordinates[0]}&zoom=12&size=600x200&markers=${area.coordinates[1]},${area.coordinates[0]}&format=png`}
+                          alt={`Service area ${i + 1}`}
+                          className="w-full h-auto object-cover"
+                          onError={(e) => {
+                            e.target.style.display = 'none';
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+
+        {/* Edit Button */}
+        <div className="flex justify-center pt-6 border-t border-gray-200">
+          <Button
+            onClick={async () => {
+              try {
+                const updated = await saveOnboardingToBackend({
+                  verificationStatus: "incomplete",
+                });
+                setLocalOnboardingData(updated);
+              } catch (err) {
+                /* error already handled in saveOnboardingToBackend */
+              }
+            }}
+            variant="outline"
+            className="text-green-700 border-green-300 hover:bg-green-50 font-black text-[10px] uppercase px-6 py-3"
+          >
+            Edit Profile
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
   const data = localOnboardingData;
 
   return (
@@ -285,11 +506,10 @@ export default function OnboardingTab({
         {ONBOARDING_STEPS.map((step, idx) => (
           <div key={step.id} className="flex flex-col items-center gap-3">
             <div
-              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-500 border-2 ${
-                idx <= currentStep
-                  ? "bg-black border-black text-white shadow-[0_0_20px_rgba(0,0,0,0.1)]"
-                  : "bg-white border-gray-200 text-gray-400"
-              }`}
+              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-500 border-2 ${idx <= currentStep
+                ? "bg-black border-black text-white shadow-[0_0_20px_rgba(0,0,0,0.1)]"
+                : "bg-white border-gray-200 text-gray-400"
+                }`}
             >
               {idx < currentStep ? (
                 <CheckCircle2 className="w-5 h-5 text-white" />
@@ -298,9 +518,8 @@ export default function OnboardingTab({
               )}
             </div>
             <span
-              className={`text-[10px] font-black uppercase tracking-widest ${
-                idx === currentStep ? "text-black" : "text-gray-400"
-              }`}
+              className={`text-[10px] font-black uppercase tracking-widest ${idx === currentStep ? "text-black" : "text-gray-400"
+                }`}
             >
               {step.title}
             </span>
@@ -335,7 +554,9 @@ export default function OnboardingTab({
                   </label>
                   <Textarea
                     value={data.workDescription}
-                    onChange={(e) => !isReadOnly && updateLocalData({ workDescription: e.target.value })}
+                    onChange={(e) =>
+                      !isReadOnly && updateLocalData({ workDescription: e.target.value })
+                    }
                     placeholder="Describe your background and expertise..."
                     className="bg-gray-100 border-gray-200 min-h-[180px] rounded-xl"
                     disabled={isReadOnly}
@@ -474,7 +695,7 @@ export default function OnboardingTab({
                     <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                     <Input
                       type="number"
-                      value={data.rate}
+                      value={data.rate} // ✅ Correct: uses 'rate' from schema
                       onChange={(e) => !isReadOnly && updateLocalData({ rate: Number(e.target.value) })}
                       className="pl-9 bg-gray-100 border-none h-12 text-xl font-black rounded-xl"
                       disabled={isReadOnly}
@@ -523,6 +744,7 @@ export default function OnboardingTab({
                   </div>
                 </Card>
               </div>
+
               <div className="space-y-6">
                 <h3 className="text-xs font-black uppercase tracking-[0.2em] text-gray-500">
                   Fixed-Rate Projects
@@ -765,14 +987,11 @@ export default function OnboardingTab({
             </div>
           )}
 
-          {/* ✅ STEP 4: SERVICE AREA WITH LEAFLET MAP */}
           {currentStep === 4 && (
             <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
               <h2 className="text-3xl font-black tracking-tighter uppercase italic">
                 Operational Range
               </h2>
-
-              {/* Base Location Controls */}
               <div className="flex gap-3">
                 <div className="flex-1 relative">
                   <label className="text-[10px] font-black uppercase tracking-widest text-gray-500 block mb-2">
@@ -811,7 +1030,6 @@ export default function OnboardingTab({
                           const res = await fetch(reverseGeocodeUrl);
                           const geoData = await res.json();
                           const address = geoData.display_name || `${latitude}, ${longitude}`;
-
                           const newServiceAreas = [...(data.serviceAreas || [])];
                           newServiceAreas[0] = {
                             ...(newServiceAreas[0] || {}),
@@ -832,8 +1050,6 @@ export default function OnboardingTab({
                   </Button>
                 )}
               </div>
-
-              {/* Radius Slider */}
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
                   <label className="text-[10px] font-black uppercase tracking-widest text-gray-500">
@@ -861,8 +1077,6 @@ export default function OnboardingTab({
                   disabled={isReadOnly}
                 />
               </div>
-
-              {/* Interactive Map */}
               <div className="aspect-[16/7] rounded-3xl overflow-hidden border border-gray-200">
                 <MapWithCoverage
                   isReadOnly={isReadOnly}
@@ -937,7 +1151,7 @@ export default function OnboardingTab({
                   <div className="grid md:grid-cols-3 gap-4">
                     <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
                       <p className="text-[8px] font-black text-gray-400 uppercase">Hourly Rate</p>
-                      <p className="text-lg font-black">${data.rate}/hr</p>
+                      <p className="text-lg font-black">${data.rate}/hr</p> {/* ✅ Uses 'rate' */}
                     </div>
                     <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
                       <p className="text-[8px] font-black text-gray-400 uppercase">Call-out</p>

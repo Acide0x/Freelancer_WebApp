@@ -1,164 +1,13 @@
-import React, { useState } from "react";
+// src/pages/WorkersPage.jsx
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { LayoutGrid, List, Star } from "lucide-react";
+import { LayoutGrid, List, Star, Loader2 } from "lucide-react";
 import { Toaster } from "sonner";
+import api from "@/api/api"; // Your Axios instance
 
-// Mock data (unchanged)
-const mockWorkers = [
-  {
-    id: "1",
-    name: "Marcus Johnson",
-    avatar: "/professional-carpenter.jpg",
-    skill: "Carpentry",
-    experience: 12,
-    rating: 4.9,
-    reviewsCount: 287,
-    tagline: "Expert carpenter with 12 years of experience in residential and commercial projects",
-  },
-  {
-    id: "2",
-    name: "Sofia Rodriguez",
-    avatar: "/professional-plumber.png",
-    skill: "Plumbing",
-    experience: 8,
-    rating: 4.8,
-    reviewsCount: 156,
-    tagline: "Licensed plumber specializing in emergency repairs and installations",
-  },
-  {
-    id: "3",
-    name: "David Chen",
-    avatar: "/professional-electrician.png",
-    skill: "Electrical",
-    experience: 15,
-    rating: 4.95,
-    reviewsCount: 342,
-    tagline: "Certified electrician with expertise in home wiring and solar installations",
-  },
-  {
-    id: "4",
-    name: "Jennifer Martinez",
-    avatar: "/professional-painter.png",
-    skill: "Painting",
-    experience: 7,
-    rating: 4.7,
-    reviewsCount: 198,
-    tagline: "Interior and exterior painter with attention to detail and professional finishes",
-  },
-  {
-    id: "5",
-    name: "Alex Thompson",
-    avatar: "/professional-chef.jpg",
-    skill: "Chef",
-    experience: 10,
-    rating: 4.85,
-    reviewsCount: 124,
-    tagline: "Professional chef offering private cooking, meal prep, and catering services",
-  },
-  {
-    id: "6",
-    name: "Michael Park",
-    avatar: "/professional-mechanic.jpg",
-    skill: "Mechanic",
-    experience: 11,
-    rating: 4.82,
-    reviewsCount: 267,
-    tagline: "ASE-certified mechanic specializing in engine repair and diagnostics",
-  },
-  {
-    id: "7",
-    name: "Patricia Williams",
-    avatar: "/professional-ac-technician.jpg",
-    skill: "AC Technician",
-    experience: 9,
-    rating: 4.75,
-    reviewsCount: 189,
-    tagline: "HVAC specialist with expertise in AC installation and maintenance",
-  },
-  {
-    id: "8",
-    name: "Robert Coleman",
-    avatar: "/professional-welder.jpg",
-    skill: "Welder",
-    experience: 14,
-    rating: 4.9,
-    reviewsCount: 211,
-    tagline: "Certified welder with experience in metal fabrication and custom projects",
-  },
-  {
-    id: "9",
-    name: "Maria Garcia",
-    avatar: "/professional-chef.jpg",
-    skill: "Chef",
-    experience: 6,
-    rating: 4.65,
-    reviewsCount: 87,
-    tagline: "Culinary graduate offering specialized catering and event food services",
-  },
-  {
-    id: "10",
-    name: "James Anderson",
-    avatar: "/professional-carpenter.jpg",
-    skill: "Carpentry",
-    experience: 13,
-    rating: 4.88,
-    reviewsCount: 234,
-    tagline: "Skilled carpenter known for custom woodwork and renovation projects",
-  },
-  {
-    id: "11",
-    name: "Lisa Chang",
-    avatar: "/professional-painter.png",
-    skill: "Painting",
-    experience: 8,
-    rating: 4.72,
-    reviewsCount: 143,
-    tagline: "Detail-oriented painter offering residential and commercial services",
-  },
-  {
-    id: "12",
-    name: "Kevin White",
-    avatar: "/professional-electrician.png",
-    skill: "Electrical",
-    experience: 10,
-    rating: 4.8,
-    reviewsCount: 198,
-    tagline: "Licensed electrician offering residential wiring and troubleshooting",
-  },
-  {
-    id: "13",
-    name: "Angela Scott",
-    avatar: "/professional-chef.jpg",
-    skill: "Chef",
-    experience: 12,
-    rating: 4.9,
-    reviewsCount: 301,
-    tagline: "Executive chef with experience in high-end catering and private dining",
-  },
-  {
-    id: "14",
-    name: "Thomas Wright",
-    avatar: "/professional-plumber.png",
-    skill: "Plumbing",
-    experience: 11,
-    rating: 4.86,
-    reviewsCount: 203,
-    tagline: "Master plumber offering comprehensive residential plumbing solutions",
-  },
-  {
-    id: "15",
-    name: "Rachel Green",
-    avatar: "/professional-ac-technician.jpg",
-    skill: "AC Technician",
-    experience: 7,
-    rating: 4.7,
-    reviewsCount: 112,
-    tagline: "HVAC certified technician with fast response times for AC issues",
-  },
-];
+// REMOVE mockWorkers
 
-// Header with SkillLink styling
 const Header = ({ variant }) => (
   <header className="bg-background border-b border-border py-4 px-6">
     <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-green-500 bg-clip-text text-transparent">
@@ -167,8 +16,7 @@ const Header = ({ variant }) => (
   </header>
 );
 
-// WorkerCard with SkillLink branding
-function WorkerCard({ id, name, avatar, skill, experience, rating, reviewsCount, tagline }) {
+function WorkerCard({ id, name, avatar, headline, primarySkill, experience, rating, reviewsCount }) {
   return (
     <div className="bg-card border border-border rounded-xl p-5 hover:border-blue-500 hover:shadow-lg transition-all duration-300">
       <div className="flex gap-4 mb-4">
@@ -179,44 +27,48 @@ function WorkerCard({ id, name, avatar, skill, experience, rating, reviewsCount,
         />
         <div className="flex-1">
           <h3 className="font-bold text-foreground text-lg">{name}</h3>
-          <p className="text-sm text-blue-600 font-medium mb-1">{skill}</p>
+          {/* ✅ Show HEADLINE here (not skill) */}
+          <p className="text-sm text-blue-600 font-medium mb-1">{headline}</p>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1">
               {Array.from({ length: 5 }).map((_, i) => (
                 <Star
                   key={i}
-                  className={`w-4 h-4 ${
-                    i < Math.floor(rating)
-                      ? "text-green-500 fill-green-500"
-                      : i < rating
+                  className={`w-4 h-4 ${i < Math.floor(rating)
+                    ? "text-green-500 fill-green-500"
+                    : i < rating
                       ? "text-green-300 fill-green-300"
                       : "text-foreground/30"
-                  }`}
+                    }`}
                 />
               ))}
             </div>
-            <span className="text-sm font-semibold text-foreground">{rating}</span>
+            <span className="text-sm font-semibold text-foreground">{rating.toFixed(1)}</span>
             <span className="text-sm text-foreground/60">({reviewsCount})</span>
           </div>
         </div>
       </div>
 
-      <p className="text-sm text-foreground/70 line-clamp-2 mb-4">{tagline}</p>
-
-      <div className="flex items-center gap-2 mb-5">
+      {/* Optional: show primary skill in tags if desired */}
+      <div className="flex items-center gap-2 mb-4">
+        <span className="px-2.5 py-1 bg-gray-100 text-gray-700 rounded-full text-xs font-medium">
+          {primarySkill}
+        </span>
         <span className="px-2.5 py-1 bg-green-50 text-green-700 rounded-full text-xs font-medium">
           {experience}+ years
         </span>
       </div>
 
-      <Button className="w-full bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600 text-white">
+      <Button
+        className="w-full bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600 text-white"
+        onClick={() => window.location.href = `/provider/${id}`}
+      >
         View Profile
       </Button>
     </div>
   );
 }
 
-// Filter Sidebar styled consistently
 function WorkerFilterSidebar({ onFiltersChange }) {
   const [selectedSkills, setSelectedSkills] = useState([]);
   const [selectedRating, setSelectedRating] = useState(0);
@@ -244,6 +96,7 @@ function WorkerFilterSidebar({ onFiltersChange }) {
     });
   };
 
+  // Fetch unique skills from backend? Or keep static for now
   const skills = ["Carpentry", "Plumbing", "Electrical", "Painting", "HVAC", "Welding", "Cooking", "Auto Repair"];
   const ratings = [4, 4.5, 4.7, 4.8, 4.9];
 
@@ -294,13 +147,12 @@ function WorkerFilterSidebar({ onFiltersChange }) {
                 {Array.from({ length: 5 }).map((_, i) => (
                   <Star
                     key={i}
-                    className={`w-3.5 h-3.5 ${
-                      i < Math.floor(rating)
-                        ? "text-green-500 fill-green-500"
-                        : i < rating
+                    className={`w-3.5 h-3.5 ${i < Math.floor(rating)
+                      ? "text-green-500 fill-green-500"
+                      : i < rating
                         ? "text-green-300 fill-green-300"
                         : "text-foreground/30"
-                    }`}
+                      }`}
                   />
                 ))}
               </div>
@@ -326,7 +178,6 @@ function WorkerFilterSidebar({ onFiltersChange }) {
   );
 }
 
-// Main WorkersPage
 export default function WorkersPage() {
   const [viewMode, setViewMode] = useState("grid");
   const [searchTerm, setSearchTerm] = useState("");
@@ -337,15 +188,38 @@ export default function WorkersPage() {
     rating: 0,
   });
   const [currentPage, setCurrentPage] = useState(1);
-  const workersPerPage = 20;
+  const [workers, setWorkers] = useState([]); // ← Real data
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  const filteredWorkers = mockWorkers.filter((worker) => {
+  // Fetch providers on mount
+  useEffect(() => {
+    const fetchProviders = async () => {
+      try {
+        setLoading(true);
+        const response = await api.get("/users/providers");
+        setWorkers(response.data.providers || []);
+        setError(null);
+      } catch (err) {
+        console.error("Failed to fetch providers:", err);
+        setError("Failed to load professionals. Please try again later.");
+        setWorkers([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchProviders();
+  }, []);
+
+  // Apply filters & search
+  const filteredWorkers = workers.filter((worker) => {
     const matchesSearch =
-      worker.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      worker.skill.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      worker.tagline.toLowerCase().includes(searchTerm.toLowerCase());
-
-    const matchesSkills =
+      (worker.name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (worker.skill || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (worker.tagline || "").toLowerCase().includes(searchTerm.toLowerCase());
+    
+      const matchesSkills =
       filters.skills.length === 0 ||
       filters.skills.some((skill) => worker.skill.toLowerCase().includes(skill.toLowerCase()));
 
@@ -355,8 +229,39 @@ export default function WorkersPage() {
   });
 
   const sortedWorkers = [...filteredWorkers].sort((a, b) => b.rating - a.rating);
+  const workersPerPage = 20;
   const totalPages = Math.ceil(sortedWorkers.length / workersPerPage);
-  const paginatedWorkers = sortedWorkers.slice((currentPage - 1) * workersPerPage, currentPage * workersPerPage);
+  const paginatedWorkers = sortedWorkers.slice(
+    (currentPage - 1) * workersPerPage,
+    currentPage * workersPerPage
+  );
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-background flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+          <p className="text-foreground/70">Loading professionals...</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (error) {
+    return (
+      <main className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center p-6 max-w-md">
+          <p className="text-red-500 mb-4">{error}</p>
+          <Button
+            onClick={() => window.location.reload()}
+            className="bg-gradient-to-r from-blue-600 to-green-500 text-white"
+          >
+            Retry
+          </Button>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <>
@@ -406,27 +311,24 @@ export default function WorkersPage() {
                 <div className="flex gap-2">
                   <button
                     onClick={() => setViewMode("grid")}
-                    className={`p-2.5 rounded-lg transition-colors ${
-                      viewMode === "grid"
-                        ? "bg-blue-600 text-white"
-                        : "bg-muted text-foreground/70 hover:bg-blue-50 hover:text-blue-600"
-                    }`}
+                    className={`p-2.5 rounded-lg transition-colors ${viewMode === "grid"
+                      ? "bg-blue-600 text-white"
+                      : "bg-muted text-foreground/70 hover:bg-blue-50 hover:text-blue-600"
+                      }`}
                   >
                     <LayoutGrid className="w-4.5 h-4.5" />
                   </button>
                   <button
                     onClick={() => setViewMode("list")}
-                    className={`p-2.5 rounded-lg transition-colors ${
-                      viewMode === "list"
-                        ? "bg-blue-600 text-white"
-                        : "bg-muted text-foreground/70 hover:bg-blue-50 hover:text-blue-600"
-                    }`}
+                    className={`p-2.5 rounded-lg transition-colors ${viewMode === "list"
+                      ? "bg-blue-600 text-white"
+                      : "bg-muted text-foreground/70 hover:bg-blue-50 hover:text-blue-600"
+                      }`}
                   >
                     <List className="w-4.5 h-4.5" />
                   </button>
                 </div>
               </div>
-
 
               {paginatedWorkers.length > 0 ? (
                 <div
