@@ -132,7 +132,7 @@ export default function Navbar() {
                   <Button variant="ghost" className="p-0 h-auto w-auto">
                     <Avatar className="h-9 w-9 border">
                       <AvatarImage
-                        src={user.profilePic || "/placeholder.svg"}
+                        src={user.avatar || "/placeholder.svg"} // ✅ changed from profilePic to avatar
                         alt={user.fullName || "User"}
                       />
                       <AvatarFallback>
@@ -218,7 +218,7 @@ export default function Navbar() {
                   <div className="flex items-center gap-3 p-2">
                     <Avatar className="h-10 w-10 border">
                       <AvatarImage
-                        src={user.profilePic || "/placeholder.svg"}
+                        src={user.avatar || "/placeholder.svg"} // ✅ same fix here
                         alt={user.fullName || "User"}
                       />
                       <AvatarFallback>
