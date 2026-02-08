@@ -211,6 +211,27 @@ export default function OnboardingTab({
     }
   };
 
+  // Helper to upload a single image to backend → Cloudinary
+  const uploadImage = async (file) => {
+    const formData = new FormData();
+    formData.append("image", file);
+
+    try {
+      const response = await api.post("/upload/image", formData, {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+      });
+      return response.data.url; // Cloudinary secure URL
+    } catch (error) {
+      console.error("Image upload failed:", error);
+      toast.error(error.response?.data?.message || "Failed to upload image");
+      throw error;
+    }
+  };
+
+
+
   const handleSaveDraft = async () => {
     setIsSaving(true);
     try {
@@ -960,21 +981,42 @@ export default function OnboardingTab({
                               onChange={(e) => {
                                 if (isReadOnly) return;
                                 const files = Array.from(e.target.files || []);
-                                if (files.length > 0) {
-                                  const newPortfolios = [...(data.portfolios || [])];
-                                  const remainingSlots = 10 - (newPortfolios[pIdx]?.images?.length || 0);
-                                  const imagesToAdd = files
-                                    .slice(0, remainingSlots)
-                                    .map((file) => URL.createObjectURL(file));
-                                  newPortfolios[pIdx] = {
-                                    ...newPortfolios[pIdx],
-                                    images: [
-                                      ...(newPortfolios[pIdx]?.images || []),
-                                      ...imagesToAdd,
-                                    ],
-                                  };
-                                  updateLocalData({ portfolios: newPortfolios });
+                                if (files.length === 0) return;
+
+                                const newPortfolios = [...(data.portfolios || [])];
+                                const currentImages = newPortfolios[pIdx]?.images || [];
+                                const validImages = currentImages.filter(
+                                  (url) => typeof url === "string" && url.startsWith("http")
+                                );
+                                const remainingSlots = 10 - validImages.length;
+
+                                if (remainingSlots <= 0) {
+                                  toast.warning("Maximum 10 images per project");
+                                  return;
                                 }
+
+                                const filesToUpload = files.slice(0, remainingSlots);
+                                toast.message(`Uploading ${filesToUpload.length} image(s)...`);
+
+                                // ✅ Start upload WITHOUT async/await in onChange (which is not async)
+                                Promise.all(
+                                  filesToUpload.map((file) =>
+                                    uploadImage(file).then((url) => url.trim()) // ✅ trim after upload
+                                  )
+                                )
+                                  .then((uploadedUrls) => {
+                                    const cleanUrls = uploadedUrls.filter(Boolean); // remove falsy
+                                    newPortfolios[pIdx] = {
+                                      ...newPortfolios[pIdx],
+                                      images: [...validImages, ...cleanUrls],
+                                    };
+                                    updateLocalData({ portfolios: newPortfolios });
+                                    toast.success("Images uploaded successfully!");
+                                  })
+                                  .catch((err) => {
+                                    console.error("Upload failed:", err);
+                                    // Error already shown in uploadImage()
+                                  });
                               }}
                             />
                           </label>

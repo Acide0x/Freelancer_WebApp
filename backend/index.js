@@ -1,12 +1,16 @@
+// index.js
+
 require("dotenv").config();
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 
+// Import routes
 const userRoutes = require("./routes/user.route");
 const jobRoutes = require("./routes/job.route");
 const adminRoutes = require("./routes/admin.route");
+const uploadRoutes = require("./routes/upload.route"); // ✅ Added upload route
 
 const app = express();
 
@@ -14,13 +18,15 @@ const app = express();
 app.use(express.json());
 app.use(cookieParser());
 
-// CORS
+// Note: multer is only applied on upload routes, so no global conflict
+
+// -------------------- CORS Configuration --------------------
 const allowedOrigins = ["http://localhost:5173"];
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
+      if (!origin) return callback(null, true); // Allow requests with no origin (e.g., mobile, curl)
       if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
@@ -32,7 +38,7 @@ app.use(
   })
 );
 
-// -------------------- MongoDB --------------------
+// -------------------- MongoDB Connection --------------------
 const connectDB = async () => {
   try {
     await mongoose.connect(process.env.MONGO_URI);
@@ -43,17 +49,24 @@ const connectDB = async () => {
   }
 };
 
-// -------------------- Routes --------------------
+// -------------------- Route Registration --------------------
 app.use("/users", userRoutes);
 app.use("/jobs", jobRoutes);
 app.use("/admins", adminRoutes);
+app.use("/upload", uploadRoutes); // ✅ Mount upload routes under /upload
 
 // -------------------- Health Check --------------------
 app.get("/", (req, res) => {
   res.send("✅ Backend is running!");
 });
 
-// -------------------- Server --------------------
+// -------------------- Error Handling (optional but recommended) --------------------
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err);
+  res.status(500).json({ message: "Something went wrong!" });
+});
+
+// -------------------- Server Startup --------------------
 const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
