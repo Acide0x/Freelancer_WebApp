@@ -84,15 +84,17 @@ const jobSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: [
-        "open",          // visible to workers
-        "assigned",      // worker selected, escrow pending
-        "escrow_funded", // money locked
-        "in_progress",
-        "completed",
-        "cancelled",
-        "disputed",
+        'open',
+        'assigned',
+        'pending_provider_acceptance', // ✅ ADD THIS LINE
+        'escrow_funded',
+        'in_progress',
+        'completed',
+        'cancelled',
+        'disputed',
+        'resolved'
       ],
-      default: "open",
+      default: 'open',
     },
 
     // 🔐 Escrow system

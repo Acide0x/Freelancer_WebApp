@@ -6,15 +6,16 @@ import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
 import JobsPage from "./pages/JobListing";
 import WorkersPage from "./pages/WorkerListing";
-import WorkerProfile from "./pages/WorkerProfile";
+import WorkerProfilePage from "./pages/WorkerDetailPage";
+import JobOffersPage from "./pages/JobOffersPage";
 import ProfilePage from "./pages/ProfilePage";
-import WorkersDashboardPage from "./pages/WorkersDashboardPage"; // ✅ Only dashboard route needed
+import WorkersDashboardPage from "./pages/WorkersDashboardPage"; 
 import AdminDashboardClient from "./pages/AdminDashboardPage";
 
 import Navbar from './components/Navbar';
 import Footer from './components/footer'; 
 import { AppProvider } from './context/AppContext';
-import { Toaster } from 'sonner'; // ✅ Add Sonner Toaster (recommended)
+import { Toaster } from 'sonner'; 
 
 export default function App() {
   return (
@@ -33,9 +34,10 @@ export default function App() {
             <Route path="/signup" element={<SignupPage />} />
             <Route path="/jobs" element={<JobsPage />} />
             <Route path="/workers" element={<WorkersPage />} />
-            <Route path="/worker/:id" element={<WorkerProfile />} />
+            <Route path="/provider/:id" element={<WorkerProfilePage />} />
+            <Route path="/job-offers/:id" element={<JobOffersPage />} />
             <Route path="/profile" element={<ProfilePage />} />
-            {/* ✅ Single route for full worker dashboard */}
+            {/* Single route for full worker dashboard */}
             <Route path="/workersdashboard" element={<WorkersDashboardPage />} />
             <Route path="/admindashboard" element={<AdminDashboardClient />} /> 
             {/* Optional: catch-all fallback */}
@@ -43,7 +45,7 @@ export default function App() {
           </Routes>
         </main>
         <Footer />
-        {/* ✅ Render Sonner Toaster once in the app */}
+        {/* Renders Sonner Toaster once in the app */}
         <Toaster position="bottom-center" richColors />
       </BrowserRouter>
     </AppProvider>

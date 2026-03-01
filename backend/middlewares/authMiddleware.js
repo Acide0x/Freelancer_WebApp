@@ -68,4 +68,4 @@ const verifyAuth = async (req, res, next) => {
   }
 };
 
-module.exports = verifyAuth;
+module.exports = { verifyAuth };
