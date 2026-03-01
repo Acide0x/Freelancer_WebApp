@@ -419,7 +419,7 @@ export default function JobsPage() {
       params.append("page", currentPage);
       params.append("limit", jobsPerPage);
 
-      const response = await api.get(`/jobs?${params.toString()}`);
+      const response = await api.get(`/jobs/?${params.toString()}`);
       const jobs = response.data.jobs || response.data;
       const total = response.data.total || (Array.isArray(jobs) ? jobs.length : 0);
 

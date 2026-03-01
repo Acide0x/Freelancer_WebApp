@@ -253,22 +253,25 @@ const userSchema = new mongoose.Schema(
         default: 0,
       },
     },
-    reviews: [{
-      reviewerId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
-      },
-      rating: {
-        type: Number,
-        min: 1,
-        max: 5,
-      },
-      comment: String,
-      date: {
-        type: Date,
-        default: Date.now,
-      },
-    }],
+    reviews: {
+      type: [{
+        reviewerId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        },
+        rating: {
+          type: Number,
+          min: 1,
+          max: 5,
+        },
+        comment: String,
+        date: {
+          type: Date,
+          default: Date.now,
+        },
+      }],
+      default: [],
+    },
 
     /* ================= SECURITY & ACCOUNT STATUS ================= */
     isActive: {

@@ -8,6 +8,7 @@ import {
   LogOut,
   Settings,
   MessageSquare,
+  Briefcase,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -77,7 +78,9 @@ export default function Navbar() {
       navigate("/login", { replace: true });
     }
   };
-  console.log("Saved user:", user);
+
+  // Helper to get user ID safely
+  const getUserId = () => user?._id || user?.id || "";
 
   return (
     <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-md border-b border-border">
@@ -132,7 +135,7 @@ export default function Navbar() {
                   <Button variant="ghost" className="p-0 h-auto w-auto">
                     <Avatar className="h-9 w-9 border">
                       <AvatarImage
-                        src={user.avatar || "/placeholder.svg"} // ✅ changed from profilePic to avatar
+                        src={user.avatar || "/placeholder.svg"}
                         alt={user.fullName || "User"}
                       />
                       <AvatarFallback>
@@ -152,6 +155,19 @@ export default function Navbar() {
                       <Link to="/admindashboard" className="flex items-center text-sm px-3 py-2 rounded-md">
                         <Settings className="h-4 w-4 mr-2" />
                         Admin Dashboard
+                      </Link>
+                    </DropdownMenuItem>
+                  )}
+
+                  {/* 🔹 Provider-only: Job Offers - Link to /job-offers/:userId */}
+                  {user.role === "provider" && (
+                    <DropdownMenuItem asChild>
+                      <Link 
+                        to={`/job-offers/${getUserId()}`} 
+                        className="flex items-center text-sm px-3 py-2 rounded-md"
+                      >
+                        <Briefcase className="h-4 w-4 mr-2" />
+                        Job Offers
                       </Link>
                     </DropdownMenuItem>
                   )}
@@ -218,7 +234,7 @@ export default function Navbar() {
                   <div className="flex items-center gap-3 p-2">
                     <Avatar className="h-10 w-10 border">
                       <AvatarImage
-                        src={user.avatar || "/placeholder.svg"} // ✅ same fix here
+                        src={user.avatar || "/placeholder.svg"}
                         alt={user.fullName || "User"}
                       />
                       <AvatarFallback>
@@ -231,7 +247,20 @@ export default function Navbar() {
                     </div>
                   </div>
 
-                  {/* 👇 MOBILE DASHBOARD LINK */}
+                  {/* 🔹 Provider-only: Job Offers (Mobile) - Link to /job-offers/:userId */}
+                  {user.role === "provider" && (
+                    <Link 
+                      to={`/job-offers/${getUserId()}`} 
+                      className="w-full" 
+                      onClick={() => setIsOpen(false)}
+                    >
+                      <Button variant="outline" className="w-full justify-start">
+                        <Briefcase className="w-4 h-4 mr-2" />
+                        Job Offers
+                      </Button>
+                    </Link>
+                  )}
+
                   <Link to="/workersdashboard" className="w-full" onClick={() => setIsOpen(false)}>
                     <Button variant="outline" className="w-full justify-start">
                       <MessageSquare className="w-4 h-4 mr-2" />
