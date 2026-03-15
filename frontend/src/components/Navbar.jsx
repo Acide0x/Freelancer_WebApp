@@ -159,8 +159,8 @@ export default function Navbar() {
                     </DropdownMenuItem>
                   )}
 
-                  {/* 🔹 Provider-only: Job Offers - Link to /job-offers/:userId */}
-                  {user.role === "provider" && (
+                  {/* 🔹 Job Offers - For BOTH Provider AND Client */}
+                  {(user.role === "provider" || user.role === "customer") && (
                     <DropdownMenuItem asChild>
                       <Link 
                         to={`/job-offers/${getUserId()}`} 
@@ -168,6 +168,19 @@ export default function Navbar() {
                       >
                         <Briefcase className="h-4 w-4 mr-2" />
                         Job Offers
+                      </Link>
+                    </DropdownMenuItem>
+                  )}
+
+                  {/* 🔹 My Applications - For BOTH Provider AND Client */}
+                  {(user.role === "provider" || user.role === "customer") && (
+                    <DropdownMenuItem asChild>
+                      <Link 
+                        to={`/my-applications/${getUserId()}`} 
+                        className="flex items-center text-sm px-3 py-2 rounded-md"
+                      >
+                        <Briefcase className="h-4 w-4 mr-2" />
+                        My Applications
                       </Link>
                     </DropdownMenuItem>
                   )}
@@ -247,8 +260,8 @@ export default function Navbar() {
                     </div>
                   </div>
 
-                  {/* 🔹 Provider-only: Job Offers (Mobile) - Link to /job-offers/:userId */}
-                  {user.role === "provider" && (
+                  {/* 🔹 Job Offers - For BOTH Provider AND Client (Mobile) */}
+                  {(user.role === "provider" || user.role === "customer") && (
                     <Link 
                       to={`/job-offers/${getUserId()}`} 
                       className="w-full" 
@@ -257,6 +270,20 @@ export default function Navbar() {
                       <Button variant="outline" className="w-full justify-start">
                         <Briefcase className="w-4 h-4 mr-2" />
                         Job Offers
+                      </Button>
+                    </Link>
+                  )}
+
+                  {/* 🔹 My Applications - For BOTH Provider AND Client (Mobile) */}
+                  {(user.role === "provider" || user.role === "customer") && (
+                    <Link 
+                      to={`/my-applications/${getUserId()}`} 
+                      className="w-full" 
+                      onClick={() => setIsOpen(false)}
+                    >
+                      <Button variant="outline" className="w-full justify-start">
+                        <Briefcase className="w-4 h-4 mr-2" />
+                        My Applications
                       </Button>
                     </Link>
                   )}
