@@ -6,7 +6,7 @@ const mongoose = require("mongoose");
 // 🔁 HELPERS & UTILITIES
 // ============================================================================
 
-// Valid status transitions map - ENHANCED with pending logic
+// Valid status transitions map
 const VALID_TRANSITIONS = {
   open: ["assigned", "cancelled", "pending_provider_acceptance"],
   assigned: ["pending_provider_acceptance", "cancelled"],
@@ -35,6 +35,80 @@ const isAssignedWorker = (job, userId) => {
 
 // Check if job is in pending state (client can still update)
 const isJobPending = (job) => job?.status === "pending_provider_acceptance";
+
+// ✅ NEW: Determine available actions for current user on this job
+const getAvailableActions = (job, user) => {
+  if (!user || !user._id) return [];
+
+  const userId = user._id.toString();
+  const isClient = isJobOwner(job, userId);
+  const isProvider = isAssignedWorker(job, userId);
+  const actions = [];
+
+  switch (job.status) {
+    case "open":
+      if (user.role === "provider" && !isClient) {
+        actions.push("apply");
+      }
+      if (isClient) {
+        actions.push("update", "cancel");
+      }
+      break;
+
+    case "pending_provider_acceptance":
+      // ONLY assigned provider can accept/decline
+      if (isProvider) {
+        actions.push("accept_offer", "decline_offer");
+      }
+      // Client can cancel or update job details
+      if (isClient) {
+        actions.push("cancel", "update");
+      }
+      break;
+
+    case "assigned":
+      // This is intermediate state after client accepts application
+      if (isProvider) {
+        actions.push("accept_offer", "decline_offer");
+      }
+      if (isClient) {
+        actions.push("cancel");
+      }
+      break;
+
+    case "escrow_funded":
+      if (isProvider) {
+        actions.push("start_work");
+      }
+      if (isClient && !job.escrow?.funded) {
+        actions.push("fund_escrow");
+      }
+      break;
+
+    case "in_progress":
+      if (isClient || isProvider) {
+        actions.push("complete_job");
+      }
+      if (isClient || isProvider) {
+        actions.push("cancel");
+      }
+      break;
+
+    case "completed":
+      if (isClient && !job.review) {
+        actions.push("submit_review");
+      }
+      break;
+
+    case "cancelled":
+    case "disputed":
+    case "resolved":
+      // No actions available
+      break;
+  }
+
+  return actions;
+};
 
 // Sanitize job output for public/client/provider views
 const sanitizeJob = (job, requestingUser) => {
@@ -70,6 +144,10 @@ const sanitizeJob = (job, requestingUser) => {
       }
     }
   }
+
+  // ✅ Add available actions for frontend
+  obj.availableActions = getAvailableActions(job, requestingUser);
+
   return obj;
 };
 
@@ -123,17 +201,19 @@ const buildGeoFilter = (latitude, longitude, radiusKm) => {
 // ============================================================================
 // 📝 JOB CREATION & LISTING
 // ============================================================================
+
 /**
  * POST /jobs/add
  * Create a job - supports both flows via optional assignedWorker
- * ✅ VERIFICATION CHECK REMOVED - HIRE ANY PROVIDER
  */
 exports.createJob = async (req, res) => {
   if (!req.user || !req.user.id) {
     return res.status(401).json({ success: false, message: "Authentication required" });
   }
+
   const session = await mongoose.startSession();
   session.startTransaction();
+
   try {
     const {
       title, description, category, address, city,
@@ -142,7 +222,7 @@ exports.createJob = async (req, res) => {
       latitude, longitude
     } = req.body;
 
-    // 🔴 Required field validation
+    // Required field validation
     const required = { title, description, category, address, budget };
     for (const [field, value] of Object.entries(required)) {
       if (!value || (typeof value === "string" && value.trim() === "")) {
@@ -161,24 +241,21 @@ exports.createJob = async (req, res) => {
       });
     }
 
-    // 👷 Validate assignedWorker if provided (Flow A: Direct Hire)
+    // Validate assignedWorker if provided (Flow A: Direct Hire)
     if (assignedWorker) {
       const provider = await User.findById(assignedWorker).session(session);
-      // ❌ Provider must exist and have correct role
       if (!provider || provider.role !== "provider") {
         return res.status(400).json({
           success: false,
           message: "Invalid provider selected"
         });
       }
-      // ✅ VERIFICATION CHECK REMOVED - Allow hiring any provider regardless of isVerified
-      // ℹ️ Optional: Log if offline (for analytics, not blocking)
       if (provider.availabilityStatus === "offline") {
         console.log(`📝 Provider ${assignedWorker} is offline - hire request will queue`);
       }
     }
 
-    // 📍 Build location object
+    // Build location object
     const location = {
       address: address.trim(),
       city: city?.trim(),
@@ -192,7 +269,7 @@ exports.createJob = async (req, res) => {
       }
     }
 
-    // 🕒 Build estimatedDuration if provided
+    // Build estimatedDuration if provided
     const estimatedDurationObj = {};
     if (estimatedDuration !== undefined && estimatedDuration !== "") {
       const val = parseFloat(estimatedDuration);
@@ -204,7 +281,7 @@ exports.createJob = async (req, res) => {
       }
     }
 
-    // ✅ Determine initial status based on flow
+    // Determine initial status based on flow
     const initialStatus = assignedWorker
       ? "pending_provider_acceptance"
       : "open";
@@ -231,7 +308,7 @@ exports.createJob = async (req, res) => {
     const [job] = await Job.create([jobData], { session });
     await session.commitTransaction();
 
-    // 🔔 Notify provider if direct hire
+    // Notify provider if direct hire
     if (assignedWorker) {
       console.log(`🔔 Notify provider ${assignedWorker} about direct hire job ${job._id}`);
     }
@@ -267,7 +344,7 @@ exports.createJob = async (req, res) => {
 
 /**
  * GET /jobs
- * Get all active jobs with optional filters & pagination
+ * Get all active OPEN jobs (public listing - excludes direct hires)
  */
 exports.getAllJobs = async (req, res) => {
   try {
@@ -280,9 +357,14 @@ exports.getAllJobs = async (req, res) => {
     const { page, limit, skip } = parsePagination(req.query);
     const sortOption = parseSort(sortBy);
 
-    const filter = { isActive: true };
+    // ✅ CRITICAL: Only show OPEN jobs WITHOUT assigned worker (public feed)
+    const filter = {
+      isActive: true,
+      status: "open",
+      assignedWorker: null
+    };
+
     if (category) filter.category = category;
-    if (status) filter.status = status;
     if (city && city.trim()) {
       filter["location.city"] = new RegExp(city.trim(), "i");
     }
@@ -317,10 +399,8 @@ exports.getAllJobs = async (req, res) => {
       pages: Math.ceil(total / limit),
       jobs: jobs.map(job => sanitizeJob(job, req.user || null))
     });
-
   } catch (error) {
     console.error("❌ Failed to fetch jobs:", error);
-
     if (error.name === "MongoServerError" && error.code === 2) {
       return res.status(400).json({
         success: false,
@@ -333,7 +413,6 @@ exports.getAllJobs = async (req, res) => {
         message: "Invalid ID or parameter format"
       });
     }
-
     res.status(500).json({
       success: false,
       message: "Failed to fetch jobs",
@@ -354,8 +433,8 @@ exports.getMyJobs = async (req, res) => {
   try {
     const { status } = req.query;
     const { page, limit, skip } = parsePagination(req.query);
-
     const filter = { client: req.user.id, isActive: true };
+
     if (status) filter.status = status;
 
     const [jobs, total] = await Promise.all([
@@ -376,12 +455,134 @@ exports.getMyJobs = async (req, res) => {
       pages: Math.ceil(total / limit),
       jobs: jobs.map(job => sanitizeJob(job, req.user))
     });
-
   } catch (error) {
     console.error("❌ Failed to fetch your jobs:", error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch your jobs",
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
+    });
+  }
+};
+
+/**
+ * ✅ NEW: GET /jobs/offers
+ * Get job offers for logged-in provider (direct hires + accepted applications awaiting response)
+ */
+exports.getJobOffers = async (req, res) => {
+  if (!req.user || !req.user.id) {
+    return res.status(401).json({ success: false, message: "Authentication required" });
+  }
+
+  try {
+    const providerId = req.user.id;
+    const { page, limit, skip } = parsePagination(req.query);
+
+    // Only jobs where THIS provider is assigned & waiting to respond
+    const jobs = await Job.find({
+      assignedWorker: providerId,
+      status: { $in: ["pending_provider_acceptance", "assigned"] },
+      isActive: true
+    })
+      .populate("client", "fullName avatar email isVerified")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await Job.countDocuments({
+      assignedWorker: providerId,
+      status: { $in: ["pending_provider_acceptance", "assigned"] },
+      isActive: true
+    });
+
+    res.status(200).json({
+      success: true,
+      count: jobs.length,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+      jobs: jobs.map(job => sanitizeJob(job, req.user))
+    });
+  } catch (error) {
+    console.error("❌ Failed to fetch job offers:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch job offers",
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
+    });
+  }
+};
+
+/**
+ * ✅ NEW: GET /jobs/my-applications
+ * Get jobs provider has applied to (with application status)
+ */
+exports.getMyApplications = async (req, res) => {
+  if (!req.user || !req.user.id) {
+    return res.status(401).json({ success: false, message: "Authentication required" });
+  }
+
+  try {
+    const providerId = req.user.id;
+    const { page, limit, skip } = parsePagination(req.query);
+
+    // Find jobs where provider has applied
+    const jobs = await Job.find({
+      "applications.worker": providerId,
+      isActive: true
+    })
+      .populate("client", "fullName avatar")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    // Add application status to each job
+    const jobsWithStatus = jobs.map(job => {
+      const application = job.applications.find(
+        app => app.worker.toString() === providerId
+      );
+
+      // Determine application status based on job status
+      let applicationStatus = "pending";
+      if (job.status === "assigned" || job.status === "pending_provider_acceptance") {
+        if (job.assignedWorker?.toString() === providerId) {
+          applicationStatus = "accepted";
+        } else {
+          applicationStatus = "rejected";
+        }
+      } else if (job.status === "cancelled" || job.status === "completed") {
+        applicationStatus = job.status;
+      }
+
+      return {
+        ...sanitizeJob(job, req.user),
+        applicationStatus: {
+          appliedAt: application?.appliedAt,
+          proposedPrice: application?.proposedPrice,
+          message: application?.message,
+          status: applicationStatus
+        }
+      };
+    });
+
+    const total = await Job.countDocuments({
+      "applications.worker": providerId,
+      isActive: true
+    });
+
+    res.status(200).json({
+      success: true,
+      count: jobsWithStatus.length,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+      jobs: jobsWithStatus
+    });
+  } catch (error) {
+    console.error("❌ Failed to fetch applications:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch applications",
       error: process.env.NODE_ENV === "development" ? error.message : "Server error"
     });
   }
@@ -404,11 +605,12 @@ exports.getProviderJobs = async (req, res) => {
 
     const { page, limit, skip } = parsePagination(req.query);
 
-    // Build base match stage
+    // Build base match stage - ONLY open jobs without assigned worker
     const matchStage = {
       $match: {
         isActive: true,
-        status: "open"
+        status: "open",
+        assignedWorker: null
       }
     };
 
@@ -475,17 +677,14 @@ exports.getProviderJobs = async (req, res) => {
       pages: Math.ceil(total / limit),
       jobs
     });
-
   } catch (error) {
     console.error("❌ Failed to fetch provider jobs:", error);
-
     if (error.name === "MongoServerError" && error.code === 2) {
       return res.status(400).json({
         success: false,
         message: "Geospatial query error. Ensure location.coordinates has a 2dsphere index."
       });
     }
-
     res.status(500).json({
       success: false,
       message: "Failed to fetch relevant jobs",
@@ -526,14 +725,11 @@ exports.getJobById = async (req, res) => {
       success: true,
       job: sanitizeJob(job, req.user)
     });
-
   } catch (error) {
     console.error("❌ Failed to fetch job:", error);
-
     if (error.name === "CastError") {
       return res.status(400).json({ success: false, message: "Invalid job ID format" });
     }
-
     res.status(500).json({
       success: false,
       message: "Failed to fetch job",
@@ -569,19 +765,28 @@ exports.applyToJob = async (req, res) => {
       return res.status(404).json({ success: false, message: "Job not found" });
     }
 
-    // 🔐 Authorization & state checks
+    // Authorization & state checks
     if (job.status !== "open") {
       return res.status(400).json({
         success: false,
         message: `Cannot apply to job with status: ${job.status}`
       });
     }
+
+    if (job.assignedWorker) {
+      return res.status(400).json({
+        success: false,
+        message: "This job already has an assigned worker"
+      });
+    }
+
     if (job.client.toString() === providerId) {
       return res.status(400).json({
         success: false,
         message: "Clients cannot apply to their own jobs"
       });
     }
+
     if (job.applications.some(app => app.worker.toString() === providerId)) {
       return res.status(400).json({
         success: false,
@@ -589,7 +794,7 @@ exports.applyToJob = async (req, res) => {
       });
     }
 
-    // 💰 Validate proposedPrice if provided
+    // Validate proposedPrice if provided
     let price = null;
     if (proposedPrice !== undefined && proposedPrice !== "") {
       price = parseFloat(proposedPrice);
@@ -601,16 +806,17 @@ exports.applyToJob = async (req, res) => {
       }
     }
 
-    // ➕ Add application
+    // Add application
     job.applications.push({
       worker: providerId,
       proposedPrice: price,
       message: message?.trim(),
       appliedAt: new Date()
     });
+
     await job.save();
 
-    // 🔔 Notify client
+    // Notify client
     console.log(`🔔 Notify client ${job.client} about new application from ${providerId}`);
 
     res.status(200).json({
@@ -618,7 +824,6 @@ exports.applyToJob = async (req, res) => {
       message: "Application submitted successfully",
       applicationCount: job.applications.length
     });
-
   } catch (error) {
     console.error("💥 Apply to job failed:", error);
     res.status(500).json({
@@ -653,9 +858,11 @@ exports.acceptApplication = async (req, res) => {
     if (!job) {
       return res.status(404).json({ success: false, message: "Job not found" });
     }
+
     if (!isJobOwner(job, clientId)) {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
+
     if (job.status !== "open") {
       return res.status(400).json({
         success: false,
@@ -668,13 +875,14 @@ exports.acceptApplication = async (req, res) => {
       return res.status(404).json({ success: false, message: "Application not found" });
     }
 
-    // 🔄 Update job: assign worker, change to pending approval
+    // Update job: assign worker, change to pending approval
     job.assignedWorker = application.worker;
-    job.status = "assigned"; // ⏳ Now awaits provider approval
+    job.status = "pending_provider_acceptance"; // ✅ Now awaits provider approval
+
     await job.save({ session });
     await session.commitTransaction();
 
-    // 🔔 Notify provider
+    // Notify provider
     console.log(`🔔 Notify provider ${application.worker} that client accepted their application for job ${jobId}`);
 
     res.status(200).json({
@@ -686,7 +894,6 @@ exports.acceptApplication = async (req, res) => {
         assignedWorker: job.assignedWorker
       }
     });
-
   } catch (error) {
     await session.abortTransaction();
     console.error("💥 Accept application failed:", error);
@@ -702,12 +909,7 @@ exports.acceptApplication = async (req, res) => {
 
 /**
  * PATCH /jobs/:id/respond
- * ✅ UNIVERSAL: Provider accepts/declines job offer (Flow A or B)
- * Body: { action: "accept" | "decline" }
- * 
- * 🔄 AVAILABILITY LOGIC:
- * - On ACCEPT: provider → "busy", job → "escrow_funded"
- * - On DECLINE: provider → "available" (if was busy), job → "open" or "cancelled"
+ * Provider accepts/declines job offer (Flow A or B)
  */
 exports.respondToJobOffer = async (req, res) => {
   if (!req.user || !req.user.id) {
@@ -737,13 +939,15 @@ exports.respondToJobOffer = async (req, res) => {
     if (!job) {
       return res.status(404).json({ success: false, message: "Job not found" });
     }
+
     if (!isAssignedWorker(job, providerId)) {
       return res.status(403).json({
         success: false,
         message: "Only the assigned provider can respond to this offer"
       });
     }
-    if (job.status !== "pending_provider_acceptance") {
+
+    if (job.status !== "pending_provider_acceptance" && job.status !== "assigned") {
       return res.status(400).json({
         success: false,
         message: `Cannot respond to job with status: ${job.status}`
@@ -751,12 +955,12 @@ exports.respondToJobOffer = async (req, res) => {
     }
 
     if (action === "accept") {
-      // ✅ PROVIDER ACCEPTS → Move to escrow funded, set provider to BUSY
+      // PROVIDER ACCEPTS → Move to escrow funded, set provider to BUSY
       job.status = "escrow_funded";
-      job.escrow.funded = true; // Auto-fund for MVP (integrate payment gateway later)
+      job.escrow.funded = true; // Auto-fund for MVP
       job.escrow.fundedAt = new Date();
 
-      // 🔄 Update provider availability: NOW BUSY
+      // Update provider availability: NOW BUSY
       await User.findByIdAndUpdate(
         providerId,
         { availabilityStatus: "busy" },
@@ -778,9 +982,8 @@ exports.respondToJobOffer = async (req, res) => {
           escrow: job.escrow
         }
       });
-
     } else {
-      // ❌ PROVIDER DECLINES → Reopen job or cancel, set provider to AVAILABLE
+      // PROVIDER DECLINES → Reopen job or cancel, set provider to AVAILABLE
       job.assignedWorker = null;
       job.status = job.applications?.length > 0 ? "open" : "cancelled";
 
@@ -789,7 +992,7 @@ exports.respondToJobOffer = async (req, res) => {
         app => app.worker.toString() !== providerId
       );
 
-      // 🔄 Update provider availability: BACK TO AVAILABLE
+      // Update provider availability: BACK TO AVAILABLE
       await User.findByIdAndUpdate(
         providerId,
         { availabilityStatus: "available" },
@@ -814,7 +1017,6 @@ exports.respondToJobOffer = async (req, res) => {
         }
       });
     }
-
   } catch (error) {
     await session.abortTransaction();
     console.error("💥 Respond to job offer failed:", error);
@@ -853,26 +1055,30 @@ exports.fundEscrow = async (req, res) => {
     if (!job) {
       return res.status(404).json({ success: false, message: "Job not found" });
     }
+
     if (!isJobOwner(job, clientId)) {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
+
     if (!["assigned", "pending_provider_acceptance", "escrow_funded"].includes(job.status)) {
       return res.status(400).json({
         success: false,
         message: `Escrow can only be funded when job status allows it`
       });
     }
+
     if (job.escrow.funded) {
       return res.status(400).json({ success: false, message: "Escrow already funded" });
     }
 
-    // 💳 Integrate payment gateway here (Stripe, eSewa, Khalti, etc.)
+    // Integrate payment gateway here (Stripe, eSewa, Khalti, etc.)
     // For MVP: simulate successful funding
     job.escrow.funded = true;
     job.escrow.fundedAt = new Date();
     if (job.status !== "escrow_funded") {
       job.status = "escrow_funded";
     }
+
     await job.save();
 
     res.status(200).json({
@@ -880,7 +1086,6 @@ exports.fundEscrow = async (req, res) => {
       message: "Escrow funded successfully",
       escrow: job.escrow
     });
-
   } catch (error) {
     console.error("💥 Fund escrow failed:", error);
     res.status(500).json({
@@ -912,18 +1117,21 @@ exports.startWork = async (req, res) => {
     if (!job) {
       return res.status(404).json({ success: false, message: "Job not found" });
     }
+
     if (!isAssignedWorker(job, providerId)) {
       return res.status(403).json({
         success: false,
         message: "Only assigned provider can start work"
       });
     }
+
     if (!job.escrow.funded) {
       return res.status(400).json({
         success: false,
         message: "Cannot start work: Escrow not funded"
       });
     }
+
     if (job.status !== "escrow_funded") {
       return res.status(400).json({
         success: false,
@@ -941,7 +1149,6 @@ exports.startWork = async (req, res) => {
       message: "Work started successfully",
       job: { _id: job._id, status: job.status }
     });
-
   } catch (error) {
     console.error("💥 Start work failed:", error);
     res.status(500).json({
@@ -954,8 +1161,7 @@ exports.startWork = async (req, res) => {
 
 /**
  * PATCH /jobs/:id/complete
- * ✅ Either party can request completion (with optional review from client)
- * 🔄 AVAILABILITY LOGIC: When job completes → provider → "available"
+ * Either party can request completion (with optional review from client)
  */
 exports.completeJob = async (req, res) => {
   if (!req.user || !req.user.id) {
@@ -981,9 +1187,11 @@ exports.completeJob = async (req, res) => {
 
     const isClient = isJobOwner(job, userId);
     const isProvider = isAssignedWorker(job, userId);
+
     if (!isClient && !isProvider) {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
+
     if (job.status !== "in_progress") {
       return res.status(400).json({
         success: false,
@@ -991,11 +1199,11 @@ exports.completeJob = async (req, res) => {
       });
     }
 
-    // 🔄 Update job status
+    // Update job status
     job.status = "completed";
     job.escrow.releasedAt = new Date(); // Auto-release for MVP
 
-    // ⭐ Handle optional review (if client is completing)
+    // Handle optional review (if client is completing)
     if (isClient && rating !== undefined) {
       const ratingNum = parseFloat(rating);
       if (isNaN(ratingNum) || ratingNum < 1 || ratingNum > 5) {
@@ -1004,13 +1212,14 @@ exports.completeJob = async (req, res) => {
           message: "Rating must be between 1 and 5"
         });
       }
+
       job.review = {
         rating: ratingNum,
         comment: comment?.trim(),
         date: new Date()
       };
 
-      // 📊 Update provider's aggregate rating
+      // Update provider's aggregate rating
       const provider = await User.findById(job.assignedWorker).session(session);
       if (provider) {
         const totalRating = (provider.ratings.average * provider.ratings.count) + ratingNum;
@@ -1020,11 +1229,11 @@ exports.completeJob = async (req, res) => {
       }
     }
 
-    // 🔄 CRITICAL: Update provider availability → BACK TO AVAILABLE when job ends
+    // CRITICAL: Update provider availability → BACK TO AVAILABLE when job ends
     if (job.assignedWorker) {
       await User.findByIdAndUpdate(
         job.assignedWorker,
-        { availabilityStatus: "available" }, // ✅ Provider is free again!
+        { availabilityStatus: "available" },
         { session }
       );
       console.log(`🔄 Provider ${job.assignedWorker} availability set to "available" after job completion`);
@@ -1045,7 +1254,6 @@ exports.completeJob = async (req, res) => {
         escrow: job.escrow
       }
     });
-
   } catch (error) {
     await session.abortTransaction();
     console.error("💥 Complete job failed:", error);
@@ -1065,8 +1273,7 @@ exports.completeJob = async (req, res) => {
 
 /**
  * PATCH /jobs/:id
- * ✅ UPDATED: Allow client to update job when status is "pending_provider_acceptance"
- * (before provider has accepted/declined)
+ * Allow client to update job when status is "pending_provider_acceptance"
  */
 exports.updateJob = async (req, res) => {
   if (!req.user || !req.user.id) {
@@ -1082,12 +1289,12 @@ exports.updateJob = async (req, res) => {
     if (!job) {
       return res.status(404).json({ success: false, message: "Job not found" });
     }
+
     if (!isJobOwner(job, req.user.id) && req.user.role !== "admin") {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
 
-    // ✅ ENHANCED: Allow updates when pending (awaiting provider approval)
-    // Client can modify details before provider commits
+    // Allow updates when pending (awaiting provider approval)
     if (["completed", "cancelled", "in_progress"].includes(job.status)) {
       return res.status(400).json({
         success: false,
@@ -1099,6 +1306,7 @@ exports.updateJob = async (req, res) => {
       "title", "description", "budget", "urgency",
       "preferredDate", "category", "estimatedDuration"
     ];
+
     const updates = {};
     allowedUpdates.forEach((field) => {
       if (req.body[field] !== undefined) {
@@ -1140,6 +1348,7 @@ exports.updateJob = async (req, res) => {
           message: "Estimated duration value must be a valid positive number"
         });
       }
+
       updates.estimatedDuration = {
         value: newValue !== undefined ? newValue : currentValue,
         unit: ["days", "hours"].includes(newUnit) ? newUnit : "hours"
@@ -1157,7 +1366,6 @@ exports.updateJob = async (req, res) => {
       message: "Job updated successfully",
       job: sanitizeJob(updatedJob, req.user)
     });
-
   } catch (error) {
     console.error("❌ Update job error:", error);
     if (error.name === "ValidationError") {
@@ -1178,7 +1386,7 @@ exports.updateJob = async (req, res) => {
 
 /**
  * PATCH /jobs/:id/cancel
- * ✅ UPDATED: Properly reset provider availability when job is cancelled
+ * Properly reset provider availability when job is cancelled
  */
 exports.cancelJob = async (req, res) => {
   if (!req.user || !req.user.id) {
@@ -1204,9 +1412,11 @@ exports.cancelJob = async (req, res) => {
 
     const isClient = isJobOwner(job, userId);
     const isProvider = isAssignedWorker(job, userId);
+
     if (!isClient && !isProvider && req.user.role !== "admin") {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
+
     if (["completed", "cancelled"].includes(job.status)) {
       return res.status(400).json({
         success: false,
@@ -1214,22 +1424,21 @@ exports.cancelJob = async (req, res) => {
       });
     }
 
-    // 🔄 Update job status
+    // Update job status
     job.status = "cancelled";
     job.isActive = false;
 
-    // 💰 Handle escrow refund if funded
+    // Handle escrow refund if funded
     if (job.escrow.funded) {
       job.escrow.refundedAt = new Date();
-      // TODO: Integrate payment gateway refund logic here
       console.log(`💸 Process refund for job ${jobId} amount ${job.escrow.amount}`);
     }
 
-    // 🔄 CRITICAL: Update provider availability → BACK TO AVAILABLE on cancel
+    // CRITICAL: Update provider availability → BACK TO AVAILABLE on cancel
     if (job.assignedWorker) {
       await User.findByIdAndUpdate(
         job.assignedWorker,
-        { availabilityStatus: "available" }, // ✅ Provider is free again!
+        { availabilityStatus: "available" },
         { session }
       );
       console.log(`🔄 Provider ${job.assignedWorker} availability set to "available" after job cancellation`);
@@ -1238,7 +1447,7 @@ exports.cancelJob = async (req, res) => {
     await job.save({ session });
     await session.commitTransaction();
 
-    // 🔔 Notify other party
+    // Notify other party
     const notifyTo = isClient ? job.assignedWorker : job.client;
     if (notifyTo) {
       console.log(`🔔 Notify user ${notifyTo} that job ${jobId} was cancelled by ${userId}`);
@@ -1253,7 +1462,6 @@ exports.cancelJob = async (req, res) => {
         escrow: job.escrow
       }
     });
-
   } catch (error) {
     await session.abortTransaction();
     console.error("💥 Cancel job failed:", error);
@@ -1269,7 +1477,6 @@ exports.cancelJob = async (req, res) => {
 
 /**
  * PATCH /jobs/:id/end (legacy - kept for backward compatibility)
- * End (complete) job - alias for completeJob
  */
 exports.endJob = exports.completeJob;
 
@@ -1291,6 +1498,7 @@ exports.deleteJob = async (req, res) => {
     if (!job) {
       return res.status(404).json({ success: false, message: "Job not found" });
     }
+
     if (!isJobOwner(job, req.user.id) && req.user.role !== "admin") {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
@@ -1303,7 +1511,6 @@ exports.deleteJob = async (req, res) => {
       success: true,
       message: "Job deleted successfully"
     });
-
   } catch (error) {
     console.error("❌ Delete job error:", error);
     res.status(500).json({

@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { LayoutGrid, List, MapPin, Clock, DollarSign, Plus } from "lucide-react";
+import { LayoutGrid, List, MapPin, Clock, Plus, CheckCircle } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import {
   Dialog,
@@ -21,12 +21,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useNavigate } from "react-router-dom"; // ✅ NEW IMPORT
+import { useNavigate } from "react-router-dom";
 
 import api from "../api/api";
 
 function JobRequestForm({ onClose, onJobCreated }) {
-  // ... (no changes needed in this component)
   const [formData, setFormData] = useState({
     title: "",
     description: "",
@@ -95,7 +94,6 @@ function JobRequestForm({ onClose, onJobCreated }) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
-      {/* ... form content unchanged ... */}
       <div className="space-y-2">
         <Label htmlFor="title" className="text-sm font-semibold text-foreground">
           Job Title <span className="text-red-500">*</span>
@@ -182,7 +180,7 @@ function JobRequestForm({ onClose, onJobCreated }) {
 
       <div className="space-y-2">
         <Label htmlFor="budget" className="text-sm font-semibold text-foreground">
-          Budget (USD) <span className="text-red-500">*</span>
+          Budget (Rs.) <span className="text-red-500">*</span>
         </Label>
         <Input
           id="budget"
@@ -274,66 +272,134 @@ function JobRequestForm({ onClose, onJobCreated }) {
   );
 }
 
-// ✅ UPDATED: JobCard with navigation
-function JobCard({ id, title, description, skills, budget, location, postedDate, jobType }) {
-  const navigate = useNavigate(); // ✅ NEW HOOK
+// ✅ FULLY UPDATED: JobCard with client info + improved design
+function JobCard({ 
+  id, 
+  title, 
+  description, 
+  skills, 
+  budget, 
+  location, 
+  postedDate, 
+  jobType,
+  client // ✅ NEW: { fullName, avatar, isVerified } from API
+}) {
+  const navigate = useNavigate();
+  
   const locationText = typeof location === 'string'
     ? location
-    : (location?.address || "Unknown");
+    : (location?.address || location?.city || "Unknown location");
 
   const handleViewDetails = () => {
-    navigate(`/jobs/${id}`); // ✅ NAVIGATE TO JOB DETAIL PAGE
+    navigate(`/jobs/${id}`);
+  };
+
+  const handleClientClick = (e) => {
+    e.stopPropagation();
+    toast.info(`Viewing profile: ${client?.fullName || "User"}`);
   };
 
   return (
-    <div className="bg-card border border-border rounded-xl p-5 hover:border-blue-500 hover:shadow-lg transition-all duration-300">
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex-1">
-          <h3 className="font-bold text-foreground text-lg mb-2">{title}</h3>
-          <p className="text-sm text-foreground/70 line-clamp-2">{description}</p>
+    <div 
+      className="group bg-card border border-border rounded-2xl p-5 hover:border-blue-500/50 hover:shadow-xl hover:shadow-blue-500/5 transition-all duration-300 cursor-pointer"
+      onClick={handleViewDetails}
+    >
+      {/* 👤 Client Header */}
+      <div className="flex items-center gap-3 mb-4 pb-4 border-b border-border/50">
+        <div 
+          className="relative flex-shrink-0 cursor-pointer"
+          onClick={handleClientClick}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => e.key === 'Enter' && handleClientClick(e)}
+        >
+          <img
+            src={client?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(client?.fullName?.[0] || 'U')}&background=3b82f6&color=fff&size=40`}
+            alt={client?.fullName || "Client"}
+            className="w-10 h-10 rounded-full object-cover border-2 border-background ring-2 ring-blue-500/20 group-hover:ring-blue-500/40 transition-all"
+            onError={(e) => {
+              e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(client?.fullName?.[0] || 'U')}&background=3b82f6&color=fff&size=40`;
+            }}
+          />
+          {client?.isVerified && (
+            <span className="absolute -bottom-1 -right-1 w-5 h-5 bg-green-500 rounded-full flex items-center justify-center border-2 border-background" title="Verified Client">
+              <CheckCircle className="w-3 h-3 text-white" />
+            </span>
+          )}
         </div>
-        <span className="ml-2 px-3 py-1 bg-blue-600/10 text-blue-600 text-xs font-medium rounded-full whitespace-nowrap">
+        <div className="flex-1 min-w-0">
+          <div 
+            className="font-semibold text-foreground truncate hover:text-blue-600 transition-colors"
+            onClick={handleClientClick}
+          >
+            {client?.fullName || "Anonymous Client"}
+          </div>
+          <div className="text-xs text-foreground/60 flex items-center gap-2">
+            <Clock className="w-3.5 h-3.5" />
+            <span>Posted {postedDate}</span>
+          </div>
+        </div>
+        <span className="px-2.5 py-1 bg-blue-600/10 text-blue-600 text-xs font-medium rounded-full whitespace-nowrap">
           {jobType}
         </span>
       </div>
 
-      <div className="flex flex-wrap gap-2 mb-4">
-        {skills?.slice(0, 2).map((skill) => (
-          <span key={skill} className="px-2.5 py-1 bg-blue-50 text-blue-700 text-xs rounded-full font-medium">
-            {skill}
-          </span>
-        ))}
-        {skills?.length > 2 && <span className="px-2.5 py-1 text-xs text-foreground/60">+{skills.length - 2} more</span>}
+      {/* 📋 Job Content */}
+      <div className="mb-4">
+        <h3 className="font-bold text-foreground text-lg mb-2 line-clamp-1 group-hover:text-blue-600 transition-colors">
+          {title}
+        </h3>
+        <p className="text-sm text-foreground/70 line-clamp-2 leading-relaxed">
+          {description}
+        </p>
       </div>
 
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-5 text-sm text-foreground/60 mb-5">
-        <div className="flex items-center gap-1.5">
-          <DollarSign className="w-4 h-4 text-green-600" />
-          <span className="font-semibold text-foreground">{budget}</span>
+      {/* 🏷️ Skills Tags */}
+      {skills?.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          {skills.slice(0, 3).map((skill, idx) => (
+            <span 
+              key={idx} 
+              className="px-2.5 py-1 bg-gradient-to-r from-blue-50 to-cyan-50 text-blue-700 text-xs rounded-full font-medium border border-blue-100"
+            >
+              {skill}
+            </span>
+          ))}
+          {skills.length > 3 && (
+            <span className="px-2.5 py-1 text-xs text-foreground/60 bg-muted rounded-full">
+              +{skills.length - 3} more
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* 💰 Budget + 📍 Location */}
+      <div className="flex flex-wrap items-center gap-4 text-sm text-foreground/70 mb-5 pb-4 border-b border-border/50">
+        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-green-50 text-green-700 rounded-lg font-semibold">
+          <span className="text-green-600 font-bold">Rs.</span>
+          <span>{budget}</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <MapPin className="w-4 h-4 text-blue-600" />
-          <span>{locationText}</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Clock className="w-4 h-4 text-cyan-600" />
-          <span>{postedDate}</span>
+          <MapPin className="w-4 h-4 text-blue-600 flex-shrink-0" />
+          <span className="truncate max-w-[180px]">{locationText}</span>
         </div>
       </div>
 
-      {/* ✅ UPDATED BUTTON WITH NAVIGATION */}
+      {/* 🎯 Action Button */}
       <Button
-        className="w-full bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600 text-white"
-        onClick={handleViewDetails}
+        className="w-full bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600 text-white font-medium shadow-sm hover:shadow-md transition-all"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleViewDetails();
+        }}
       >
-        View Details
+        View Details →
       </Button>
     </div>
   );
 }
 
 function FilterSidebar({ onFiltersChange }) {
-  // ... (no changes needed)
   const [selectedSkills, setSelectedSkills] = useState([]);
   const [selectedLocation, setSelectedLocation] = useState("");
 
@@ -408,7 +474,6 @@ function FilterSidebar({ onFiltersChange }) {
 }
 
 export default function JobsPage() {
-  // ... (no changes needed in main component)
   const [viewMode, setViewMode] = useState("grid");
   const [searchTerm, setSearchTerm] = useState("");
   const [filters, setFilters] = useState({
@@ -568,15 +633,22 @@ export default function JobsPage() {
                 <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 gap-6" : "flex flex-col gap-6"}>
                   {jobs.map((job) => (
                     <JobCard
-                      key={job._id}          // ✅ Use _id for React key
-                      id={job._id}           // ✅ Pass _id (MongoDB's ID field)
+                      key={job._id}
+                      id={job._id}
                       title={job.title}
                       description={job.description}
-                      skills={job.skills || []}
-                      budget={job.budget ? `$${job.budget}` : "N/A"}
+                      skills={job.category ? [job.category] : []}
+                      // ✅ UPDATED: Use Rs. instead of $
+                      budget={job.budget ? `Rs. ${job.budget.toFixed(2)}` : "Negotiable"}
                       location={job.location}
-                      postedDate={job.postedDate || new Date(job.createdAt).toLocaleString()}
-                      jobType={job.jobType || "Contract"}
+                      // ✅ UPDATED: Show full date with year
+                      postedDate={new Date(job.createdAt).toLocaleDateString('en-US', { 
+                        month: 'short', 
+                        day: 'numeric',
+                        year: 'numeric'
+                      })}
+                      jobType={job.urgency === 'high' ? 'Urgent' : job.urgency === 'low' ? 'Flexible' : 'Standard'}
+                      client={job.client}
                     />
                   ))}
                 </div>
