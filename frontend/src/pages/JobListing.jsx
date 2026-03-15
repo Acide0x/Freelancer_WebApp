@@ -21,10 +21,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useNavigate } from "react-router-dom"; // ✅ NEW IMPORT
 
 import api from "../api/api";
 
 function JobRequestForm({ onClose, onJobCreated }) {
+  // ... (no changes needed in this component)
   const [formData, setFormData] = useState({
     title: "",
     description: "",
@@ -93,6 +95,7 @@ function JobRequestForm({ onClose, onJobCreated }) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
+      {/* ... form content unchanged ... */}
       <div className="space-y-2">
         <Label htmlFor="title" className="text-sm font-semibold text-foreground">
           Job Title <span className="text-red-500">*</span>
@@ -271,12 +274,16 @@ function JobRequestForm({ onClose, onJobCreated }) {
   );
 }
 
-// ✅ FIXED: Properly render location object
+// ✅ UPDATED: JobCard with navigation
 function JobCard({ id, title, description, skills, budget, location, postedDate, jobType }) {
-  // Handle location object safely
-  const locationText = typeof location === 'string' 
-    ? location 
+  const navigate = useNavigate(); // ✅ NEW HOOK
+  const locationText = typeof location === 'string'
+    ? location
     : (location?.address || "Unknown");
+
+  const handleViewDetails = () => {
+    navigate(`/jobs/${id}`); // ✅ NAVIGATE TO JOB DETAIL PAGE
+  };
 
   return (
     <div className="bg-card border border-border rounded-xl p-5 hover:border-blue-500 hover:shadow-lg transition-all duration-300">
@@ -306,7 +313,7 @@ function JobCard({ id, title, description, skills, budget, location, postedDate,
         </div>
         <div className="flex items-center gap-1.5">
           <MapPin className="w-4 h-4 text-blue-600" />
-          <span>{locationText}</span> {/* ✅ FIXED */}
+          <span>{locationText}</span>
         </div>
         <div className="flex items-center gap-1.5">
           <Clock className="w-4 h-4 text-cyan-600" />
@@ -314,7 +321,11 @@ function JobCard({ id, title, description, skills, budget, location, postedDate,
         </div>
       </div>
 
-      <Button className="w-full bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600 text-white">
+      {/* ✅ UPDATED BUTTON WITH NAVIGATION */}
+      <Button
+        className="w-full bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600 text-white"
+        onClick={handleViewDetails}
+      >
         View Details
       </Button>
     </div>
@@ -322,6 +333,7 @@ function JobCard({ id, title, description, skills, budget, location, postedDate,
 }
 
 function FilterSidebar({ onFiltersChange }) {
+  // ... (no changes needed)
   const [selectedSkills, setSelectedSkills] = useState([]);
   const [selectedLocation, setSelectedLocation] = useState("");
 
@@ -396,6 +408,7 @@ function FilterSidebar({ onFiltersChange }) {
 }
 
 export default function JobsPage() {
+  // ... (no changes needed in main component)
   const [viewMode, setViewMode] = useState("grid");
   const [searchTerm, setSearchTerm] = useState("");
   const [filters, setFilters] = useState({
@@ -439,7 +452,6 @@ export default function JobsPage() {
     fetchJobs();
   }, [searchTerm, filters, currentPage]);
 
-  // Auto-log user from localStorage (dev only)
   useEffect(() => {
     const userStr = localStorage.getItem("user");
     if (userStr) {
@@ -553,17 +565,16 @@ export default function JobsPage() {
                   <p className="text-foreground/70">Loading jobs...</p>
                 </div>
               ) : jobs.length > 0 ? (
-                // ✅ FIXED: Added key={job.id}
                 <div className={viewMode === "grid" ? "grid grid-cols-1 md:grid-cols-2 gap-6" : "flex flex-col gap-6"}>
                   {jobs.map((job) => (
                     <JobCard
-                      key={job.id} // ✅ REQUIRED
-                      id={job.id}
+                      key={job._id}          // ✅ Use _id for React key
+                      id={job._id}           // ✅ Pass _id (MongoDB's ID field)
                       title={job.title}
                       description={job.description}
                       skills={job.skills || []}
                       budget={job.budget ? `$${job.budget}` : "N/A"}
-                      location={job.location} // Now safe to pass object
+                      location={job.location}
                       postedDate={job.postedDate || new Date(job.createdAt).toLocaleString()}
                       jobType={job.jobType || "Contract"}
                     />
