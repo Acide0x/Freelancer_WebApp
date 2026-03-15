@@ -1,15 +1,15 @@
 // src/pages/JobDetailPage.jsx
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react'; // 1. Added useMemo
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { 
-  Star, MapPin, Clock, User, AlertCircle, CheckCircle, 
-  ArrowLeft, Loader2, MessageSquare, Calendar, Edit2, Trash2, 
-  XCircle, Briefcase, ShieldCheck, ExternalLink 
+import {
+  Star, MapPin, Clock, User, AlertCircle, CheckCircle,
+  ArrowLeft, Loader2, MessageSquare, Calendar, Edit2, Trash2,
+  XCircle, Briefcase, ShieldCheck, ExternalLink
 } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import {
@@ -28,7 +28,6 @@ import api from '@/api/api';
 // ============================================================================
 // 🎨 HELPERS & UTILITIES
 // ============================================================================
-
 const formatUrgency = (urgency) => ({
   low: { label: 'Low Priority', class: 'bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200' },
   medium: { label: 'Medium Priority', class: 'bg-yellow-100 text-yellow-800 border-yellow-300 hover:bg-yellow-200' },
@@ -54,9 +53,9 @@ const formatBudgetHint = (budget, category) => {
 
 const formatDate = (dateString) => {
   if (!dateString) return 'N/A';
-  return new Date(dateString).toLocaleDateString('en-US', { 
-    month: 'short', 
-    day: 'numeric', 
+  return new Date(dateString).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit'
@@ -73,16 +72,13 @@ const getCachedUser = () => {
 // ============================================================================
 // 👤 USER CARD COMPONENT (Reusable for Client & Provider)
 // ============================================================================
-
 function UserCard({ user, role, onMessage, onViewProfile, showRating = true }) {
   if (!user) return null;
-  
   const isProvider = role === 'provider';
-  
   return (
     <Card className="p-4">
       <div className="flex items-start gap-4">
-        <button 
+        <button
           onClick={() => onViewProfile?.(user._id)}
           className="relative group flex-shrink-0"
           aria-label={`View ${isProvider ? 'provider' : 'client'} profile`}
@@ -91,8 +87,8 @@ function UserCard({ user, role, onMessage, onViewProfile, showRating = true }) {
             src={user.avatar?.trim() || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.fullName?.[0] || 'U')}&background=${isProvider ? '22c55e' : '3b82f6'}&color=fff&size=56`}
             alt={user.fullName}
             className="w-14 h-14 rounded-full object-cover border-2 border-background ring-2 ring-gray-200 group-hover:ring-blue-400 transition-all"
-            onError={(e) => { 
-              e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(user.fullName?.[0] || 'U')}&background=${isProvider ? '22c55e' : '3b82f6'}&color=fff&size=56`; 
+            onError={(e) => {
+              e.target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(user.fullName?.[0] || 'U')}&background=${isProvider ? '22c55e' : '3b82f6'}&color=fff&size=56`;
             }}
           />
           {user.isVerified && (
@@ -101,10 +97,9 @@ function UserCard({ user, role, onMessage, onViewProfile, showRating = true }) {
             </span>
           )}
         </button>
-        
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <button 
+            <button
               onClick={() => onViewProfile?.(user._id)}
               className="font-semibold text-foreground hover:text-blue-600 transition-colors text-left truncate"
             >
@@ -114,19 +109,18 @@ function UserCard({ user, role, onMessage, onViewProfile, showRating = true }) {
               <span className="text-xs text-gray-500 truncate max-w-[200px]">• {user.providerDetails.headline}</span>
             )}
           </div>
-          
           {showRating && user.ratings?.count > 0 && (
             <div className="flex items-center gap-1 mt-1">
               {[...Array(5)].map((_, i) => (
-                <Star 
-                  key={i} 
+                <Star
+                  key={i}
                   className={`w-4 h-4 ${
-                    i < Math.floor(user.ratings.average) 
-                      ? 'text-yellow-500 fill-yellow-500' 
-                      : i < user.ratings.average 
-                        ? 'text-yellow-300 fill-yellow-300' 
+                    i < Math.floor(user.ratings.average)
+                      ? 'text-yellow-500 fill-yellow-500'
+                      : i < user.ratings.average
+                        ? 'text-yellow-300 fill-yellow-300'
                         : 'text-gray-300'
-                  }`} 
+                  }`}
                 />
               ))}
               <span className="text-sm text-gray-600 ml-1">
@@ -134,28 +128,25 @@ function UserCard({ user, role, onMessage, onViewProfile, showRating = true }) {
               </span>
             </div>
           )}
-          
           {isProvider && user.providerDetails?.availabilityStatus && (
             <div className="flex items-center gap-1.5 mt-1">
               <span className={`w-2 h-2 rounded-full ${
                 user.providerDetails.availabilityStatus === 'available' ? 'bg-green-500' :
-                user.providerDetails.availabilityStatus === 'busy' ? 'bg-orange-500' : 'bg-gray-400'
+                  user.providerDetails.availabilityStatus === 'busy' ? 'bg-orange-500' : 'bg-gray-400'
               }`} />
               <span className="text-xs text-gray-500 capitalize">
                 {user.providerDetails.availabilityStatus}
               </span>
             </div>
           )}
-          
           <p className="text-xs text-gray-500 mt-1">
             Member since {new Date(user.createdAt).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
           </p>
         </div>
-        
         {onMessage && (
-          <Button 
-            variant="ghost" 
-            size="sm" 
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => onMessage(user)}
             className="flex-shrink-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
           >
@@ -171,10 +162,8 @@ function UserCard({ user, role, onMessage, onViewProfile, showRating = true }) {
 // ============================================================================
 // 📋 APPLICATION CARD COMPONENT (For Client View)
 // ============================================================================
-
 function ApplicationCard({ application, job, onAccept, onDecline, isOwner }) {
   const [loading, setLoading] = useState(false);
-  
   const handleAction = async (action) => {
     if (!onAccept && !onDecline) return;
     setLoading(true);
@@ -193,9 +182,7 @@ function ApplicationCard({ application, job, onAccept, onDecline, isOwner }) {
       setLoading(false);
     }
   };
-  
   const worker = application.worker;
-  
   return (
     <Card className="p-4 hover:border-blue-300 transition-colors">
       <div className="flex items-start gap-3">
@@ -219,11 +206,9 @@ function ApplicationCard({ application, job, onAccept, onDecline, isOwner }) {
               {formatDate(application.appliedAt)}
             </span>
           </div>
-          
           {application.message && (
             <p className="text-sm text-gray-600 mt-2 line-clamp-2">{application.message}</p>
           )}
-          
           {worker?.providerDetails?.skills?.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-2">
               {worker.providerDetails.skills.slice(0, 3).map((skill, idx) => (
@@ -237,11 +222,10 @@ function ApplicationCard({ application, job, onAccept, onDecline, isOwner }) {
             </div>
           )}
         </div>
-        
         {isOwner && job.status === 'open' && (
           <div className="flex flex-col gap-1.5">
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               variant="default"
               onClick={() => handleAction('accept')}
               disabled={loading}
@@ -250,8 +234,8 @@ function ApplicationCard({ application, job, onAccept, onDecline, isOwner }) {
               {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle className="w-3 h-3 mr-1" />}
               Accept
             </Button>
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               variant="outline"
               onClick={() => handleAction('decline')}
               disabled={loading}
@@ -270,11 +254,12 @@ function ApplicationCard({ application, job, onAccept, onDecline, isOwner }) {
 // ============================================================================
 // 🎯 MAIN PAGE COMPONENT
 // ============================================================================
-
 export default function JobDetailPage() {
   const navigate = useNavigate();
   const { id } = useParams();
-  const currentUser = getCachedUser();
+  
+  // 2. FIX: Memoize currentUser to prevent infinite loops
+  const currentUser = useMemo(() => getCachedUser(), []); 
 
   const [job, setJob] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -303,15 +288,16 @@ export default function JobDetailPage() {
   // Fetch job data
   const fetchJob = useCallback(async () => {
     if (!id || id === 'undefined' || id === 'null' || redirecting) return;
-
+    
+    // 3. FIX: Add AbortController to handle unmounts gracefully
+    const controller = new AbortController();
+    
     try {
-      const response = await api.get(`/jobs/${id}`);
+      const response = await api.get(`/jobs/${id}`, { signal: controller.signal });
       const data = response.data;
       const jobData = data?.job || data?.data?.job || data?.data || null;
-
       if (!jobData) throw new Error('Job not found');
       setJob(jobData);
-
       if (currentUser?.role === 'provider' && jobData.applications) {
         const applied = jobData.applications.some(
           app => app.worker?._id === currentUser._id || app.worker === currentUser._id
@@ -319,6 +305,9 @@ export default function JobDetailPage() {
         setHasApplied(applied);
       }
     } catch (err) {
+      // 4. FIX: Ignore cancellation errors to stop console spam
+      if (err.code === 'ERR_CANCELED') return;
+
       console.error('Fetch error:', err);
       const msg = err.response?.data?.message || 'Failed to load job';
       toast.error(msg);
@@ -328,6 +317,9 @@ export default function JobDetailPage() {
     } finally {
       setLoading(false);
     }
+    
+    // Cleanup function for abort
+    return () => controller.abort();
   }, [id, currentUser, navigate, redirecting]);
 
   useEffect(() => {
@@ -340,25 +332,21 @@ export default function JobDetailPage() {
     if (!proposedPrice || !coverMessage.trim()) {
       return toast.error('Please fill in both price and message');
     }
-
     const price = parseFloat(proposedPrice);
     const hint = formatBudgetHint(job.budget, job.category);
     if (price < hint.min || price > hint.max) {
       return toast.error(`Price must be between Rs. ${hint.min.toLocaleString()} - Rs. ${hint.max.toLocaleString()}`);
     }
-
     setIsSubmitting(true);
     try {
       const response = await api.post(`/jobs/${id}/apply`, {
         proposedPrice: price,
         message: coverMessage.trim()
       });
-
       setHasApplied(true);
       toast.success(response.data?.message || 'Application submitted successfully!');
       setProposedPrice('');
       setCoverMessage('');
-      
       await fetchJob();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to submit application');
@@ -372,7 +360,6 @@ export default function JobDetailPage() {
     if (!cancelReason.trim()) {
       return toast.error('Please provide a reason for cancellation');
     }
-    
     setIsCancelling(true);
     try {
       await api.patch(`/jobs/${id}/cancel`, { reason: cancelReason.trim() });
@@ -450,26 +437,22 @@ export default function JobDetailPage() {
     <>
       <Toaster />
       <main className="min-h-screen bg-background">
-        
         {/* 🔙 Sticky Header */}
         <div className="border-b bg-card sticky top-0 z-30 shadow-sm">
           <div className="max-w-6xl mx-auto px-4 py-3">
-            <button 
-              onClick={() => navigate(-1)} 
+            <button
+              onClick={() => navigate(-1)}
               className="flex items-center gap-2 text-gray-600 hover:text-foreground transition-colors"
               aria-label="Go back"
             >
-              <ArrowLeft className="w-4 h-4" /> 
+              <ArrowLeft className="w-4 h-4" />
               <span className="text-sm font-medium">Back to Jobs</span>
             </button>
           </div>
         </div>
-
         <div className="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-
           {/* 📋 LEFT: Job Details (2/3 width on desktop) */}
           <div className="lg:col-span-2 space-y-5">
-
             {/* 🏷️ Header Card with Title, Status, Urgency */}
             <Card className="p-5 border-t-4 border-t-blue-500">
               <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-4">
@@ -529,7 +512,6 @@ export default function JobDetailPage() {
                   </div>
                 )}
               </div>
-              
               {/* 📊 Quick Stats Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t">
                 <div className="text-center p-2 bg-gray-50 rounded-lg">
@@ -540,8 +522,8 @@ export default function JobDetailPage() {
                   <Clock className="w-4 h-4 text-blue-600 mx-auto mb-1" />
                   <p className="text-xs text-gray-500">Duration</p>
                   <p className="font-bold text-sm">
-                    {job.estimatedDuration?.value 
-                      ? `${job.estimatedDuration.value} ${job.estimatedDuration.unit}` 
+                    {job.estimatedDuration?.value
+                      ? `${job.estimatedDuration.value} ${job.estimatedDuration.unit}`
                       : 'Flexible'}
                   </p>
                 </div>
@@ -559,7 +541,6 @@ export default function JobDetailPage() {
                 </div>
               </div>
             </Card>
-
             {/* 📍 Location & Timing */}
             <Card className="p-5">
               <CardTitle className="text-lg mb-4 flex items-center gap-2">
@@ -582,7 +563,6 @@ export default function JobDetailPage() {
                 )}
               </CardContent>
             </Card>
-
             {/* 📝 Description */}
             <Card className="p-5">
               <CardTitle className="text-lg mb-4">Job Description</CardTitle>
@@ -592,7 +572,6 @@ export default function JobDetailPage() {
                 </p>
               </CardContent>
             </Card>
-
             {/* 👤 Posted By (Client) */}
             {job.client && (
               <Card className="p-5">
@@ -600,15 +579,14 @@ export default function JobDetailPage() {
                   <User className="w-5 h-5 text-blue-600" />
                   Posted by
                 </CardTitle>
-                <UserCard 
-                  user={job.client} 
-                  role="customer" 
+                <UserCard
+                  user={job.client}
+                  role="customer"
                   onViewProfile={handleViewProfile}
                   onMessage={isAssignedProvider ? (user) => toast.info(`Messaging ${user.fullName}`) : undefined}
                 />
               </Card>
             )}
-
             {/* 👷 Assigned Provider (if any) */}
             {job.assignedWorker && (
               <Card className="p-5 border-l-4 border-l-green-500">
@@ -616,9 +594,9 @@ export default function JobDetailPage() {
                   <Briefcase className="w-5 h-5 text-green-600" />
                   Assigned Provider
                 </CardTitle>
-                <UserCard 
-                  user={job.assignedWorker} 
-                  role="provider" 
+                <UserCard
+                  user={job.assignedWorker}
+                  role="provider"
                   onViewProfile={handleViewProfile}
                   onMessage={isClient ? (user) => toast.info(`Messaging ${user.fullName}`) : undefined}
                   showRating={true}
@@ -630,14 +608,14 @@ export default function JobDetailPage() {
                       This provider is waiting for your response
                     </p>
                     <div className="flex gap-2">
-                      <Button 
+                      <Button
                         className="flex-1 bg-green-600 hover:bg-green-700"
                         onClick={() => handleProviderResponse('accept')}
                       >
                         <CheckCircle className="w-4 h-4 mr-2" /> Accept Offer
                       </Button>
-                      <Button 
-                        variant="outline" 
+                      <Button
+                        variant="outline"
                         className="flex-1 border-red-300 text-red-700 hover:bg-red-50"
                         onClick={() => handleProviderResponse('decline')}
                       >
@@ -659,7 +637,6 @@ export default function JobDetailPage() {
                 )}
               </Card>
             )}
-
             {/* 💬 Applications List (Client View Only) */}
             {isClient && job.applications?.length > 0 && (
               <Card className="p-5">
@@ -668,16 +645,15 @@ export default function JobDetailPage() {
                     <MessageSquare className="w-5 h-5 text-blue-600" />
                     Applications ({job.applications.length})
                   </span>
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => setShowApplications(!showApplications)}
                     className="text-xs"
                   >
                     {showApplications ? 'Hide' : 'Show'}
                   </Button>
                 </CardTitle>
-                
                 {showApplications && (
                   <div className="space-y-3">
                     {job.applications.map((app) => (
@@ -693,7 +669,6 @@ export default function JobDetailPage() {
                 )}
               </Card>
             )}
-
             {/* ⭐ Review (After Completion) */}
             {job.status === 'completed' && job.review && (
               <Card className="p-5 bg-emerald-50 border-emerald-200">
@@ -704,11 +679,11 @@ export default function JobDetailPage() {
                 <div className="flex items-start gap-3">
                   <div className="flex">
                     {[...Array(5)].map((_, i) => (
-                      <Star 
-                        key={i} 
+                      <Star
+                        key={i}
                         className={`w-4 h-4 ${
                           i < job.review.rating ? 'text-yellow-500 fill-yellow-500' : 'text-gray-300'
-                        }`} 
+                        }`}
                       />
                     ))}
                   </div>
@@ -716,12 +691,9 @@ export default function JobDetailPage() {
                 </div>
               </Card>
             )}
-
           </div>
-
           {/* 🎯 RIGHT: Action Panel (1/3 width on desktop) */}
           <div className="lg:col-span-1 space-y-5">
-            
             {/* 💰 Budget & Pricing Info */}
             <Card className="p-5 bg-gradient-to-br from-blue-50 to-cyan-50 border-blue-200">
               <CardTitle className="text-lg mb-3 flex items-center gap-2">
@@ -744,7 +716,6 @@ export default function JobDetailPage() {
                 )}
               </div>
             </Card>
-
             {/* 📬 Application Form (Provider) */}
             {hasApplied ? (
               <Card className="p-5 bg-green-50 border-green-200">
@@ -787,7 +758,6 @@ export default function JobDetailPage() {
                       Suggested: Rs. {budgetHint.min.toLocaleString()} - Rs. {budgetHint.max.toLocaleString()}
                     </p>
                   </div>
-                  
                   <div>
                     <Label htmlFor="message" className="text-sm font-medium">Cover Message</Label>
                     <Textarea
@@ -801,17 +771,15 @@ export default function JobDetailPage() {
                     />
                     <p className="text-xs text-gray-500 text-right mt-1">{coverMessage.length}/500</p>
                   </div>
-                  
                   <div className="flex gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                     <AlertCircle className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
                     <p className="text-sm text-blue-800">
                       Tip: Mention relevant experience, timeline, and why you're a great fit.
                     </p>
                   </div>
-                  
-                  <Button 
-                    type="submit" 
-                    disabled={isSubmitting || !proposedPrice || !coverMessage.trim()} 
+                  <Button
+                    type="submit"
+                    disabled={isSubmitting || !proposedPrice || !coverMessage.trim()}
                     className="w-full h-11 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600"
                   >
                     {isSubmitting ? (
@@ -820,10 +788,9 @@ export default function JobDetailPage() {
                       <><MessageSquare className="w-4 h-4 mr-2" /> Submit Proposal</>
                     )}
                   </Button>
-                  
-                  <Button 
-                    type="button" 
-                    variant="outline" 
+                  <Button
+                    type="button"
+                    variant="outline"
                     className="w-full h-11"
                     onClick={() => {
                       toast.success('Job saved to your watchlist!');
@@ -832,7 +799,6 @@ export default function JobDetailPage() {
                     <Star className="w-4 h-4 mr-2" /> Save Job
                   </Button>
                 </form>
-                
                 {job.applications?.length > 0 && (
                   <p className="text-xs text-gray-500 text-center mt-4 pt-3 border-t">
                     {job.applications.length} proposal{job.applications.length !== 1 ? 's' : ''} received
@@ -858,8 +824,8 @@ export default function JobDetailPage() {
                         <Edit2 className="w-4 h-4 mr-2" /> Manage Job
                       </Button>
                       {job.applications?.length > 0 && (
-                        <Button 
-                          variant="default" 
+                        <Button
+                          variant="default"
                           className="w-full bg-blue-600 hover:bg-blue-700"
                           onClick={() => setShowApplications(true)}
                         >
@@ -886,14 +852,13 @@ export default function JobDetailPage() {
                     <p className="text-sm text-gray-600">
                       Only registered service providers can apply to jobs.
                     </p>
-                    <Button variant="outline" onClick={() => navigate('/become-provider')}>
+                    <Button variant="outline" onClick={() => navigate('/signup')}>
                       Become a Provider
                     </Button>
                   </div>
                 ) : null}
               </Card>
             )}
-
             {/* 🔗 Quick Actions */}
             <Card className="p-5">
               <CardTitle className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
@@ -913,7 +878,6 @@ export default function JobDetailPage() {
                 )}
               </div>
             </Card>
-
           </div>
         </div>
       </main>

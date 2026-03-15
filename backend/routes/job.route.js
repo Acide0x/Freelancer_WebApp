@@ -42,13 +42,13 @@ router.get("/provider", restrictTo("provider"), jobController.getProviderJobs);
  */
 router.get("/my", restrictTo("customer"), jobController.getMyJobs);
 
+// Add this BEFORE router.get("/:id", ...) to avoid route conflict
 /**
- * ✅ NEW: GET /jobs/offers
- * Get job offers for logged-in provider (direct hires + accepted applications awaiting response)
+ * GET /jobs/offers
+ * Get job offers for logged-in provider
  * Access: Providers only
  */
-router.get("/offers", restrictTo("provider"), jobController.getJobOffers);
-
+router.get("/offers", verifyAuth, jobController.getJobOffers);
 /**
  * ✅ NEW: GET /jobs/my-applications
  * Get jobs provider has applied to (with application status)

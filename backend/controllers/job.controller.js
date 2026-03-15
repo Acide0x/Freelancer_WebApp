@@ -466,17 +466,22 @@ exports.getMyJobs = async (req, res) => {
 };
 
 /**
- * ✅ NEW: GET /jobs/offers
+ * GET /jobs/offers
  * Get job offers for logged-in provider (direct hires + accepted applications awaiting response)
+ * Access: Providers only
  */
 exports.getJobOffers = async (req, res) => {
   if (!req.user || !req.user.id) {
     return res.status(401).json({ success: false, message: "Authentication required" });
   }
 
+  // Optional: Role check for extra security
+  if (req.user.role !== "provider") {
+    return res.status(403).json({ success: false, message: "Providers only" });
+  }
+
   try {
     const providerId = req.user.id;
-    const { page, limit, skip } = parsePagination(req.query);
 
     // Only jobs where THIS provider is assigned & waiting to respond
     const jobs = await Job.find({
@@ -485,22 +490,11 @@ exports.getJobOffers = async (req, res) => {
       isActive: true
     })
       .populate("client", "fullName avatar email isVerified")
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
-
-    const total = await Job.countDocuments({
-      assignedWorker: providerId,
-      status: { $in: ["pending_provider_acceptance", "assigned"] },
-      isActive: true
-    });
+      .sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
       count: jobs.length,
-      total,
-      page,
-      pages: Math.ceil(total / limit),
       jobs: jobs.map(job => sanitizeJob(job, req.user))
     });
   } catch (error) {
@@ -514,17 +508,26 @@ exports.getJobOffers = async (req, res) => {
 };
 
 /**
- * ✅ NEW: GET /jobs/my-applications
+ * GET /jobs/my-applications
  * Get jobs provider has applied to (with application status)
+ * Access: Providers only
  */
 exports.getMyApplications = async (req, res) => {
   if (!req.user || !req.user.id) {
     return res.status(401).json({ success: false, message: "Authentication required" });
   }
 
+  // Optional: Role check for extra security
+  if (req.user.role !== "provider") {
+    return res.status(403).json({ success: false, message: "Providers only" });
+  }
+
   try {
     const providerId = req.user.id;
-    const { page, limit, skip } = parsePagination(req.query);
+    const { page = 1, limit = 20 } = req.query;
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+    const skip = (pageNum - 1) * limitNum;
 
     // Find jobs where provider has applied
     const jobs = await Job.find({
@@ -532,14 +535,15 @@ exports.getMyApplications = async (req, res) => {
       isActive: true
     })
       .populate("client", "fullName avatar")
+      .populate("assignedWorker", "fullName avatar")
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limit);
+      .limit(limitNum);
 
     // Add application status to each job
     const jobsWithStatus = jobs.map(job => {
-      const application = job.applications.find(
-        app => app.worker.toString() === providerId
+      const application = job.applications?.find(
+        app => app.worker?.toString() === providerId
       );
 
       // Determine application status based on job status
@@ -550,8 +554,12 @@ exports.getMyApplications = async (req, res) => {
         } else {
           applicationStatus = "rejected";
         }
-      } else if (job.status === "cancelled" || job.status === "completed") {
-        applicationStatus = job.status;
+      } else if (job.status === "cancelled") {
+        applicationStatus = "cancelled";
+      } else if (job.status === "completed") {
+        applicationStatus = "completed";
+      } else if (job.status === "escrow_funded" || job.status === "in_progress") {
+        applicationStatus = "in_progress";
       }
 
       return {
@@ -574,8 +582,8 @@ exports.getMyApplications = async (req, res) => {
       success: true,
       count: jobsWithStatus.length,
       total,
-      page,
-      pages: Math.ceil(total / limit),
+      page: pageNum,
+      pages: Math.ceil(total / limitNum),
       jobs: jobsWithStatus
     });
   } catch (error) {

@@ -10,7 +10,8 @@ import JobsPage from "./pages/JobListing";
 import JobDetailPage from "./pages/JobDetailPage"; // ✅ NEW IMPORT
 import WorkersPage from "./pages/WorkerListing";
 import WorkerProfilePage from "./pages/WorkerDetailPage";
-import JobOffersPage from "./pages/JobOffersPage";
+import JobOffersPage from "./pages/JobOfferPage";
+import MyApplicationsPage from "./pages/MyJobApplicationPage";
 import ProfilePage from "./pages/ProfilePage";
 import WorkersDashboardPage from "./pages/WorkersDashboardPage"; 
 import AdminDashboardClient from "./pages/AdminDashboardPage";
@@ -49,6 +50,7 @@ export default function App() {
             
             {/* ✅ Other Routes */}
             <Route path="/job-offers/:id" element={<JobOffersPage />} />
+            <Route path="/my-applications/:id" element={<MyApplicationsPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/workersdashboard" element={<WorkersDashboardPage />} />
             <Route path="/admindashboard" element={<AdminDashboardClient />} />
