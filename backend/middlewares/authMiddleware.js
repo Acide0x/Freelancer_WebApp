@@ -1,71 +1,122 @@
+// middlewares/authMiddleware.js
 const jwt = require("jsonwebtoken");
 const User = require("../models/user.model");
 
-// Middleware to verify authentication
+// ============================================================================
+// 🔐 VERIFY AUTHENTICATION MIDDLEWARE
+// ============================================================================
 const verifyAuth = async (req, res, next) => {
   // Try to get token from Authorization header first
   const authHeader = req.header("Authorization");
   let token = null;
 
   if (authHeader && authHeader.startsWith("Bearer ")) {
-    token = authHeader.substring(7, authHeader.length).trim(); // Remove "Bearer " prefix
+    token = authHeader.substring(7, authHeader.length).trim();
   } else {
     // Fallback: try to get token from cookie
-    token = req.cookies?.token; // Assuming your login sets a cookie named 'token'
+    token = req.cookies?.token;
   }
 
   if (!token) {
-    return res.status(401).json({ success: false, message: "Access Denied. No token provided." });
+    return res.status(401).json({ 
+      success: false, 
+      message: "Access Denied. No token provided." 
+    });
   }
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // Logging for debugging (optional, can be removed in production)
-    // console.log("Token:", token);
-    // console.log("Decoded Token:", decoded);
-
     // Fetch the authenticated user from the database, excluding the password
     const user = await User.findById(decoded.id).select("-password");
     if (!user) {
-      return res.status(401).json({ success: false, message: "User not found." });
+      return res.status(401).json({ 
+        success: false, 
+        message: "User not found." 
+      });
     }
 
     // Check if the user account is active
     if (!user.isActive) {
-      return res.status(401).json({ success: false, message: "Account is inactive. Please contact support." });
+      return res.status(401).json({ 
+        success: false, 
+        message: "Account is inactive. Please contact support." 
+      });
     }
 
-    // Attach the user object (and potentially the raw decoded token payload if needed elsewhere) to the request
+    // Attach the user object to the request
     req.user = user;
-    req.userIdFromToken = decoded.id; // Store the ID from the token separately if needed for checks
+    req.userIdFromToken = decoded.id;
 
-    // Allow admins to bypass the userId check
+    // Allow admins to bypass certain checks (optional)
     if (user.role === "admin") {
-      // console.log("Admin access granted.");
       return next();
     }
 
-    // Optional: Check if the userId in the route params matches the authenticated user's ID
-    // This is useful for routes like /api/users/:userId where only the user themselves or an admin should access
-    // Uncomment the following block if this check is required for your route
-    /*
-    if (req.params.userId && req.params.userId !== decoded.id.toString()) {
-      return res.status(403).json({ success: false, message: "You are not authorized to perform this action." });
-    }
-    */
-
-    next(); // Proceed to the next middleware/route handler
+    next();
   } catch (err) {
-    console.error("Token verification error:", err); // Log the error for debugging
+    console.error("Token verification error:", err);
+    
     if (err.name === 'JsonWebTokenError') {
-      return res.status(401).json({ success: false, message: "Invalid Token." });
+      return res.status(401).json({ 
+        success: false, 
+        message: "Invalid Token." 
+      });
     } else if (err.name === 'TokenExpiredError') {
-      return res.status(401).json({ success: false, message: "Token has expired." });
+      return res.status(401).json({ 
+        success: false, 
+        message: "Token has expired." 
+      });
     }
-    // Generic error for other JWT issues (like invalid secret)
-    return res.status(401).json({ success: false, message: "Invalid or expired token." });
+    
+    return res.status(401).json({ 
+      success: false, 
+      message: "Invalid or expired token." 
+    });
   }
 };
 
-module.exports = { verifyAuth };
+// ============================================================================
+// 👮 ROLE-BASED AUTHORIZATION MIDDLEWARE
+// ============================================================================
+/**
+ * Restrict access to specific roles
+ * Usage: restrictTo("provider"), restrictTo("customer", "admin"), etc.
+ */
+const restrictTo = (...roles) => {
+  return (req, res, next) => {
+    // Ensure user is authenticated first
+    if (!req.user || !req.user.role) {
+      return res.status(401).json({
+        success: false,
+        message: "Please log in to access this resource"
+      });
+    }
+
+    // Check if user's role is in the allowed roles list
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: "You do not have permission to perform this action",
+        requiredRoles: roles,
+        yourRole: req.user.role
+      });
+    }
+
+    next();
+  };
+};
+
+// ============================================================================
+// 👑 ADMIN-ONLY HELPER (Optional convenience wrapper)
+// ============================================================================
+const adminOnly = restrictTo("admin");
+
+// ============================================================================
+// ✅ EXPORTS
+// ============================================================================
+module.exports = {
+  verifyAuth,
+  restrictTo,
+  adminOnly
+};
