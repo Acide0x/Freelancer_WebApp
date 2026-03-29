@@ -103,6 +103,9 @@ export default function Navbar() {
           <Link to="/workers" className="text-foreground/80 hover:text-foreground transition-colors font-medium">
             Hire Pros
           </Link>
+          <Link to="/discussions" className="text-foreground/80 hover:text-foreground transition-colors font-medium">
+            Discussion Forum
+          </Link>
           <Link to="#" className="text-foreground/80 hover:text-foreground transition-colors">
             Pricing
           </Link>
