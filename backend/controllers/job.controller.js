@@ -36,7 +36,7 @@ const isAssignedWorker = (job, userId) => {
 // Check if job is in pending state (client can still update)
 const isJobPending = (job) => job?.status === "pending_provider_acceptance";
 
-// ✅ NEW: Determine available actions for current user on this job
+//  NEW: Determine available actions for current user on this job
 const getAvailableActions = (job, user) => {
   if (!user || !user._id) return [];
 
@@ -145,7 +145,7 @@ const sanitizeJob = (job, requestingUser) => {
     }
   }
 
-  // ✅ Add available actions for frontend
+  //  Add available actions for frontend
   obj.availableActions = getAvailableActions(job, requestingUser);
 
   return obj;
@@ -357,7 +357,7 @@ exports.getAllJobs = async (req, res) => {
     const { page, limit, skip } = parsePagination(req.query);
     const sortOption = parseSort(sortBy);
 
-    // ✅ CRITICAL: Only show OPEN jobs WITHOUT assigned worker (public feed)
+    //  CRITICAL: Only show OPEN jobs WITHOUT assigned worker (public feed)
     const filter = {
       isActive: true,
       status: "open",
@@ -885,7 +885,7 @@ exports.acceptApplication = async (req, res) => {
 
     // Update job: assign worker, change to pending approval
     job.assignedWorker = application.worker;
-    job.status = "pending_provider_acceptance"; // ✅ Now awaits provider approval
+    job.status = "pending_provider_acceptance"; //  Now awaits provider approval
 
     await job.save({ session });
     await session.commitTransaction();
@@ -978,7 +978,7 @@ exports.respondToJobOffer = async (req, res) => {
       await job.save({ session });
       await session.commitTransaction();
 
-      console.log(`✅ Provider ${providerId} ACCEPTED job ${jobId} → status: busy, job: escrow_funded`);
+      console.log(` Provider ${providerId} ACCEPTED job ${jobId} → status: busy, job: escrow_funded`);
       console.log(`🔔 Notify client ${job.client} that provider accepted job ${jobId}`);
 
       res.status(200).json({
@@ -1250,7 +1250,7 @@ exports.completeJob = async (req, res) => {
     await job.save({ session });
     await session.commitTransaction();
 
-    console.log(`✅ Job ${jobId} completed. Notify client ${job.client} and provider ${job.assignedWorker}`);
+    console.log(` Job ${jobId} completed. Notify client ${job.client} and provider ${job.assignedWorker}`);
 
     res.status(200).json({
       success: true,

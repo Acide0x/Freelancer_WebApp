@@ -246,10 +246,10 @@ function BookingDialog({ provider, onClose }) {
     setLoading(true);
 
     try {
-      // ✅ Ensure provider ID is a valid string ObjectId
+      //  Ensure provider ID is a valid string ObjectId
       const providerId = (provider._id || provider.id)?.toString?.() || (provider._id || provider.id);
 
-      // ✅ MAP skill name to valid category enum
+      //  MAP skill name to valid category enum
       // ⚠️ CHECK YOUR models/job.model.js FOR EXACT CATEGORY ENUM VALUES
       const skillName = (provider.skills?.[0]?.name || "").toLowerCase().trim();
 
@@ -283,14 +283,14 @@ function BookingDialog({ provider, onClose }) {
         cleaning: "House Help",
       };
 
-      // ✅ Use mapped category or fallback (must exist in your schema)
+      //  Use mapped category or fallback (must exist in your schema)
       const safeCategory = categoryMap[skillName] || "House Help";
       
-      // ✅ Build payload - ❌ DO NOT send `status` (backend sets it internally)
+      //  Build payload - ❌ DO NOT send `status` (backend sets it internally)
       const jobPayload = {
         title: jobTitle.trim(),
         description: description.trim(),
-        category: safeCategory, // ✅ Valid enum from mapping
+        category: safeCategory, //  Valid enum from mapping
         address: (provider.locationDetails?.address || provider.location || "To be confirmed").trim(),
         city: provider.locationDetails?.city?.trim(),
         state: provider.locationDetails?.state?.trim(),
@@ -546,7 +546,7 @@ export default function ProviderProfile() {
     }
   };
 
-  // ✅ NO VERIFICATION CHECK - frontend allows hiring any provider
+  //  NO VERIFICATION CHECK - frontend allows hiring any provider
   // ℹ️ Backend will still enforce its own rules (update job.controller.js to remove isVerified check if needed)
 
   if (loading) {

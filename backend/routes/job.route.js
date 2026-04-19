@@ -4,7 +4,7 @@ const router = express.Router();
 const jobController = require("../controllers/job.controller");
 const { verifyAuth, restrictTo } = require("../middlewares/authMiddleware");
 
-console.log("✅ Job routes file loaded and exporting router");
+console.log(" Job routes file loaded and exporting router");
 
 // ============================================================================
 // 🌍 PUBLIC ROUTES (No Authentication Required)
@@ -50,7 +50,7 @@ router.get("/my", restrictTo("customer"), jobController.getMyJobs);
  */
 router.get("/offers", verifyAuth, jobController.getJobOffers);
 /**
- * ✅ NEW: GET /jobs/my-applications
+ *  NEW: GET /jobs/my-applications
  * Get jobs provider has applied to (with application status)
  * Access: Providers only
  */

@@ -21,6 +21,21 @@ const discussionSchema = new mongoose.Schema(
       required: true,
     },
 
+    /* ================= IMAGES (Cloudinary URLs) ================= */
+    images: [
+      {
+        type: String,
+        trim: true,
+        validate: {
+          validator: function (v) {
+            // Allow empty array or valid URLs
+            return !v || /^https?:\/\/.+/.test(v);
+          },
+          message: (props) => `${props.value} is not a valid image URL!`,
+        },
+      },
+    ],
+
     /* ================= CATEGORIZATION ================= */
     category: {
       type: String,
@@ -89,34 +104,47 @@ discussionSchema.index({ tags: 1 });
 discussionSchema.index({ category: 1, createdAt: -1 });
 discussionSchema.index({ viewCount: -1 });
 discussionSchema.index({ isPinned: -1, createdAt: -1 });
+// ✅ Index for image queries if needed in future
+discussionSchema.index({ images: 1 });
 
 /* ================= VIRTUALS ================= */
 discussionSchema.virtual("likeCount").get(function () {
-  return this.likes.length;
+  return this.likes?.length || 0;
 });
 
 discussionSchema.virtual("isLikedByUser").set(function (userId) {
   this._isLikedByUser = userId;
 });
 discussionSchema.virtual("isLiked").get(function () {
-  if (!this._isLikedByUser) return null;
-  return this.likes.includes(this._isLikedByUser);
+  if (!this._isLikedByUser) return false;
+  return this.likes?.some(id => 
+    id?.toString() === this._isLikedByUser?.toString()
+  ) || false;
 });
 
 /* ================= METHODS ================= */
 discussionSchema.methods.toggleLike = function (userId) {
-  const isLiked = this.likes.includes(userId);
+  if (!userId) return "unliked";
+  
+  const isLiked = this.likes?.some(id => 
+    id?.toString() === userId?.toString()
+  );
+  
   if (isLiked) {
     this.likes.pull(userId);
+    this.likeCount = Math.max(0, (this.likeCount || 0) - 1);
   } else {
-    this.likes.push(userId);
+    if (!this.likes?.some(id => id?.toString() === userId?.toString())) {
+      this.likes.push(userId);
+      this.likeCount = (this.likeCount || 0) + 1;
+    }
   }
   return isLiked ? "unliked" : "liked";
 };
 
 discussionSchema.methods.incrementView = function () {
-  this.viewCount += 1;
-  return this.save();
+  this.viewCount = (this.viewCount || 0) + 1;
+  return this.save().catch(err => console.error('View increment failed:', err));
 };
 
 discussionSchema.methods.softDelete = function () {
@@ -137,14 +165,15 @@ discussionSchema.statics.getDiscussions = async function ({
   tag,
   search,
   author,
-  sortBy = "createdAt",
+  sortBy = "newest",
   userId,
 }) {
-  const query = { isDeleted: false };
+  const query = { isDeleted: { $ne: true } };
 
   if (category) query.category = category;
-  if (tag) query.tags = tag;
+  if (tag) query.tags = { $in: [tag] }; // ✅ Use $in for array field
   if (author) query.author = author;
+  
   if (search) {
     query.$or = [
       { title: { $regex: search, $options: "i" } },
@@ -156,24 +185,31 @@ discussionSchema.statics.getDiscussions = async function ({
     newest: { createdAt: -1 },
     oldest: { createdAt: 1 },
     popular: { viewCount: -1 },
-    liked: { likes: -1 },
+    liked: { likeCount: -1 }, // ✅ Sort by virtual likeCount
+    commented: { commentCount: -1 },
     pinned: { isPinned: -1, createdAt: -1 },
   };
 
   const skip = (page - 1) * limit;
 
   const discussions = await this.find(query)
-    .populate("author", "fullName avatar role providerDetails.headline")
+    .populate("author", "fullName avatar username name profilePicture role providerDetails.headline")
     .sort(sortOptions[sortBy] || sortOptions.newest)
     .skip(skip)
     .limit(limit)
     .lean();
 
+  // ✅ Add isLiked and clean up likes array for frontend
   if (userId) {
     discussions.forEach((disc) => {
-      disc.isLiked = disc.likes?.includes(userId) || false;
-      delete disc.likes;
+      disc.isLiked = disc.likes?.some(id => 
+        id?.toString() === userId?.toString()
+      ) || false;
+      delete disc.likes; // Remove raw likes array from response
     });
+  } else {
+    // Even for unauthenticated users, remove likes array
+    discussions.forEach(disc => delete disc.likes);
   }
 
   const total = await this.countDocuments(query);
@@ -193,7 +229,10 @@ discussionSchema.statics.getDiscussions = async function ({
 
 /* ================= OUTPUT SANITIZATION ================= */
 const sanitizeOutput = (ret) => {
+  // ✅ Keep images, remove sensitive/internal fields only
   delete ret.likes;
+  delete ret._isLikedByUser;
+  delete ret.__v;
   return ret;
 };
 

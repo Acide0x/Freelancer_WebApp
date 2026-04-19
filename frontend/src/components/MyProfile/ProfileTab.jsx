@@ -7,8 +7,62 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import { Edit2, X, Check, Upload, Loader2, LogOut } from "lucide-react"; // ✅ LogOut imported
+import { Edit2, X, Check, Upload, Loader2, LogOut } from "lucide-react";
 import api from "@/api/api";
+
+// ✅ Cloudinary Config (Frontend - Unsigned Preset)
+const CLOUDINARY_CONFIG = {
+  cloudName: import.meta.env.VITE_CLOUDINARY_CLOUD_NAME,
+  uploadPreset: import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET,
+  uploadUrl: `https://api.cloudinary.com/v1_1/${import.meta.env.VITE_CLOUDINARY_CLOUD_NAME}/image/upload`,
+};
+
+// ✅ Upload avatar to Cloudinary (unsigned, frontend)
+const uploadAvatarToCloudinary = async (file, onProgress) => {
+  if (!CLOUDINARY_CONFIG.cloudName || CLOUDINARY_CONFIG.cloudName === 'undefined') {
+    throw new Error('Cloudinary cloud name not configured. Check your .env file.');
+  }
+  if (!CLOUDINARY_CONFIG.uploadPreset || CLOUDINARY_CONFIG.uploadPreset === 'undefined') {
+    throw new Error('Cloudinary upload preset not configured. Check your .env file.');
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('upload_preset', CLOUDINARY_CONFIG.uploadPreset);
+  formData.append('folder', 'users/avatars'); // Organize uploads
+
+  const xhr = new XMLHttpRequest();
+  return new Promise((resolve, reject) => {
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable && onProgress) {
+        const percent = Math.round((e.loaded * 100) / e.total);
+        onProgress(percent);
+      }
+    });
+
+    xhr.addEventListener('load', () => {
+      try {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          const data = JSON.parse(xhr.responseText);
+          resolve({
+            url: data.secure_url,
+            publicId: data.public_id,
+            thumbnail: `${data.secure_url}?w=200&h=200&fit=crop&q=auto`,
+          });
+        } else {
+          const errorData = JSON.parse(xhr.responseText);
+          reject(new Error(errorData.error?.message || 'Upload failed'));
+        }
+      } catch (e) {
+        reject(new Error(`Invalid response: ${xhr.responseText}`));
+      }
+    });
+
+    xhr.addEventListener('error', () => reject(new Error('Network error during upload')));
+    xhr.open('POST', CLOUDINARY_CONFIG.uploadUrl);
+    xhr.send(formData);
+  });
+};
 
 export default function ProfileTab({ profile: initialProfile, onUpdateProfile, onLogout }) {
   const navigate = useNavigate();
@@ -41,6 +95,8 @@ export default function ProfileTab({ profile: initialProfile, onUpdateProfile, o
   });
 
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   // Sync if parent updates profile
   useEffect(() => {
@@ -66,6 +122,7 @@ export default function ProfileTab({ profile: initialProfile, onUpdateProfile, o
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
+  // ✅ UPDATED: Frontend Cloudinary avatar upload
   const handleAvatarUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -80,20 +137,20 @@ export default function ProfileTab({ profile: initialProfile, onUpdateProfile, o
       return;
     }
 
+    setIsUploadingAvatar(true);
+    setUploadProgress(0);
+
     try {
-      const formData = new FormData();
-      formData.append("image", file);
-
-      const response = await api.post("/upload/image", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-
-      const cloudinaryUrl = response.data.url;
-      setFormData((prev) => ({ ...prev, avatar: cloudinaryUrl }));
+      const result = await uploadAvatarToCloudinary(file, setUploadProgress);
+      
+      setFormData((prev) => ({ ...prev, avatar: result.url }));
       toast.success("Avatar uploaded!");
     } catch (error) {
       console.error("Avatar upload failed:", error);
-      toast.error(error.response?.data?.message || "Failed to upload avatar");
+      toast.error(error.message || "Failed to upload avatar");
+    } finally {
+      setIsUploadingAvatar(false);
+      setUploadProgress(0);
     }
   };
 
@@ -113,7 +170,7 @@ export default function ProfileTab({ profile: initialProfile, onUpdateProfile, o
     if (formData.locationAddress !== currentAddress) {
       payload.location = {
         address: formData.locationAddress,
-        coordinates: profile.location?.coordinates || null, // preserve or null
+        coordinates: profile.location?.coordinates || null,
       };
     }
 
@@ -217,21 +274,45 @@ export default function ProfileTab({ profile: initialProfile, onUpdateProfile, o
           <Avatar className="w-24 h-24">
             <AvatarImage src={formData.avatar} alt={profile.name || "User"} />
             <AvatarFallback className="bg-blue-100 text-blue-800">
-              {getInitials(profile.name || profile.fullName)} {/* ✅ Safe */}
+              {getInitials(profile.name || profile.fullName)}
             </AvatarFallback>
           </Avatar>
+          
           {isEditing && (
-            <label className="absolute bottom-0 right-0 bg-gradient-to-r from-blue-600 to-cyan-500 text-white rounded-full p-2 cursor-pointer shadow-md hover:shadow-lg transition-shadow">
-              <Upload className="w-4 h-4" />
+            <label className={`absolute bottom-0 right-0 rounded-full p-2 cursor-pointer shadow-md transition-all ${
+              isUploadingAvatar 
+                ? 'bg-gray-400 cursor-not-allowed' 
+                : 'bg-gradient-to-r from-blue-600 to-cyan-500 text-white hover:shadow-lg'
+            }`}>
+              {isUploadingAvatar ? (
+                <Loader2 className="w-4 h-4 animate-spin text-white" />
+              ) : (
+                <Upload className="w-4 h-4" />
+              )}
               <input
                 type="file"
                 accept="image/*"
                 onChange={handleAvatarUpload}
                 className="hidden"
+                disabled={isUploadingAvatar}
               />
             </label>
           )}
+          
+          {/* ✅ Upload Progress Overlay */}
+          {isUploadingAvatar && uploadProgress > 0 && uploadProgress < 100 && (
+            <div className="absolute inset-0 bg-black/60 rounded-full flex flex-col items-center justify-center">
+              <span className="text-white text-xs font-medium mb-1">{uploadProgress}%</span>
+              <div className="w-16 h-1.5 bg-white/20 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-white transition-all duration-200"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
         </div>
+        
         <div className="flex-1 w-full">
           {isEditing ? (
             <Input
@@ -344,7 +425,7 @@ export default function ProfileTab({ profile: initialProfile, onUpdateProfile, o
           <>
             <Button
               onClick={handleSave}
-              disabled={isSaving}
+              disabled={isSaving || isUploadingAvatar}
               className="gap-2 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600 text-white"
             >
               {isSaving ? (
@@ -357,6 +438,7 @@ export default function ProfileTab({ profile: initialProfile, onUpdateProfile, o
             <Button
               onClick={handleCancel}
               variant="outline"
+              disabled={isSaving || isUploadingAvatar}
               className="gap-2 border-gray-300 text-gray-700 hover:bg-gray-50"
             >
               <X className="w-4 h-4" />
@@ -367,9 +449,10 @@ export default function ProfileTab({ profile: initialProfile, onUpdateProfile, o
         <Button
           onClick={onLogout}
           variant="outline"
+          disabled={isSaving || isUploadingAvatar}
           className="gap-2 border-red-300 text-red-600 hover:bg-red-50 ml-auto sm:ml-0"
         >
-          <LogOut className="w-4 h-4" /> {/* ✅ Now defined */}
+          <LogOut className="w-4 h-4" />
           Log Out
         </Button>
       </div>

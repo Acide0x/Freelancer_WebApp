@@ -9,13 +9,14 @@ const userRoutes = require("./routes/user.route");
 const jobRoutes = require("./routes/job.route");
 const adminRoutes = require("./routes/admin.route");
 const uploadRoutes = require("./routes/upload.route");
-const discussionRoutes = require("./routes/discussion.route"); // ✅ Discussion routes
-const commentRoutes = require("./routes/comment.route");       // ✅ Comment routes
+const discussionRoutes = require("./routes/discussion.route"); //  Discussion routes
+const commentRoutes = require("./routes/comment.route");       //  Comment routes
 
 const app = express();
 
 // -------------------- Middleware --------------------
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
 
 // -------------------- CORS Configuration --------------------
@@ -40,7 +41,7 @@ app.use(
 const connectDB = async () => {
   try {
     await mongoose.connect(process.env.MONGO_URI);
-    console.log("✅ MongoDB connected successfully.");
+    console.log(" MongoDB connected successfully.");
   } catch (err) {
     console.error("❌ MongoDB connection error:", err.message);
     process.exit(1);
@@ -53,7 +54,7 @@ app.use("/jobs", jobRoutes);
 app.use("/admins", adminRoutes);
 app.use("/upload", uploadRoutes);
 
-// ✅ Flat routes - no /api prefix, no nesting
+//  Flat routes - no /api prefix, no nesting
 app.use("/discussions", discussionRoutes);
 app.use("/comments", commentRoutes);
 
@@ -61,7 +62,7 @@ app.use("/comments", commentRoutes);
 app.get("/", (req, res) => {
   res.json({ 
     success: true, 
-    message: "✅ Freelancer WebApp Backend is running!",
+    message: " Freelancer WebApp Backend is running!",
     endpoints: {
       discussions: "/discussions",
       comments: "/comments",

@@ -16,7 +16,7 @@ exports.getPendingProviders = async (req, res) => {
     return res.status(200).json({
       success: true,
       count: providers.length,
-      data: providers, // ✅ Fixed: added "data" property
+      data: providers, //  Fixed: added "data" property
     });
   } catch (error) {
     console.error("Error fetching pending providers:", error);

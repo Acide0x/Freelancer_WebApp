@@ -86,7 +86,7 @@ const jobSchema = new mongoose.Schema(
       enum: [
         'open',
         'assigned',
-        'pending_provider_acceptance', // ✅ ADD THIS LINE
+        'pending_provider_acceptance', //  ADD THIS LINE
         'escrow_funded',
         'in_progress',
         'completed',

@@ -141,7 +141,7 @@ function ProviderOfferCard({ job, viewMode, onAccept, onDecline, acceptingId, de
             <div className="text-xs text-foreground/50 bg-muted/50 p-2 rounded mb-3">
               {isDirectHire 
                 ? '🎯 Client directly invited you' 
-                : '✅ Your application was accepted'}
+                : ' Your application was accepted'}
             </div>
           </div>
           <div className="flex gap-2 flex-shrink-0 flex-col">
@@ -201,7 +201,7 @@ function ProviderOfferCard({ job, viewMode, onAccept, onDecline, acceptingId, de
           </div>
         </div>
         <div className="text-xs text-foreground/50 bg-muted/50 p-2 rounded mb-3">
-          {isDirectHire ? '🎯 Direct hire' : '✅ Application accepted'}
+          {isDirectHire ? '🎯 Direct hire' : ' Application accepted'}
         </div>
       </div>
       <div className="p-4 border-t border-border flex gap-2">
