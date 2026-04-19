@@ -7,7 +7,7 @@ import HomePage from "./Home";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
 import JobsPage from "./pages/JobListing";
-import JobDetailPage from "./pages/JobDetailPage"; // NEW IMPORT
+import JobDetailPage from "./pages/JobDetailPage"; 
 import WorkersPage from "./pages/WorkerListing";
 import WorkerProfilePage from "./pages/WorkerDetailPage";
 import JobOffersPage from "./pages/JobOfferPage";
@@ -15,7 +15,8 @@ import MyApplicationsPage from "./pages/MyJobApplicationPage";
 import ProfilePage from "./pages/ProfilePage";
 import WorkersDashboardPage from "./pages/WorkersDashboardPage"; 
 import AdminDashboardClient from "./pages/AdminDashboardPage";
-import DiscussionForum from "./pages/DiscussionPostListing";    
+import DiscussionForum from "./pages/DiscussionPostListing";
+import DiscussionPage from "./pages/DiscussionPostDetailsPage";    
 
 // Components
 import Navbar from './components/Navbar';
@@ -43,7 +44,7 @@ export default function App() {
             
             {/* Job Routes */}
             <Route path="/jobs" element={<JobsPage />} />
-            <Route path="/jobs/:id" element={<JobDetailPage />} /> {/* ✅ NEW ROUTE */}
+            <Route path="/jobs/:id" element={<JobDetailPage />} /> {/*  NEW ROUTE */}
             
             {/* Worker Routes */}
             <Route path="/workers" element={<WorkersPage />} />
@@ -58,7 +59,7 @@ export default function App() {
 
             {/* Discussion Forum Route */}
             <Route path="/discussions" element={<DiscussionForum />} />
-            
+            <Route path="/discussions/:id" element={<DiscussionPage />} /> 
             {/* Catch-all fallback */}
             <Route path="*" element={<HomePage />} />
           </Routes>

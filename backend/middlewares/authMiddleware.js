@@ -113,7 +113,7 @@ const restrictTo = (...roles) => {
 const adminOnly = restrictTo("admin");
 
 // ============================================================================
-// ✅ EXPORTS
+//  EXPORTS
 // ============================================================================
 module.exports = {
   verifyAuth,

@@ -34,7 +34,7 @@ const adminOnly = (req, res, next) => {
   }
 };
 
-// ✅ Export both functions in CommonJS style
+//  Export both functions in CommonJS style
 module.exports = {
   protect,
   adminOnly

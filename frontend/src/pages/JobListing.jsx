@@ -272,7 +272,7 @@ function JobRequestForm({ onClose, onJobCreated }) {
   );
 }
 
-// ✅ FULLY UPDATED: JobCard with client info + improved design
+//  JobCard with client info + improved design
 function JobCard({ 
   id, 
   title, 
@@ -282,7 +282,7 @@ function JobCard({
   location, 
   postedDate, 
   jobType,
-  client // ✅ NEW: { fullName, avatar, isVerified } from API
+  client //  fullName, avatar, isVerified } from API
 }) {
   const navigate = useNavigate();
   
@@ -638,10 +638,10 @@ export default function JobsPage() {
                       title={job.title}
                       description={job.description}
                       skills={job.category ? [job.category] : []}
-                      // ✅ UPDATED: Use Rs. instead of $
+                      //  UPDATED: Use Rs. instead of $
                       budget={job.budget ? `Rs. ${job.budget.toFixed(2)}` : "Negotiable"}
                       location={job.location}
-                      // ✅ UPDATED: Show full date with year
+                      //  UPDATED: Show full date with year
                       postedDate={new Date(job.createdAt).toLocaleDateString('en-US', { 
                         month: 'short', 
                         day: 'numeric',

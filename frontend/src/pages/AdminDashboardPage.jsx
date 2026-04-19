@@ -26,7 +26,7 @@ const getStatusColor = (status) => {
   }
 };
 
-// ✅ API helpers — using /admins (plural)
+//  API helpers — using /admins (plural)
 const fetchProviderRequests = async () => {
   try {
     const response = await api.get("/admins/providers/pending");
@@ -98,7 +98,7 @@ export default function AdminDashboardClient() {
     loadRequests();
   }, []);
 
-  // ✅ Correct status extraction
+  //  Correct status extraction
   const getVerificationStatus = (request) => {
     return request.providerDetails?.verificationStatus || "pending";
   };
@@ -117,7 +117,7 @@ export default function AdminDashboardClient() {
     return matchesSearch && matchesStatus;
   });
 
-  // ✅ Accurate stats using correct status path
+  //  Accurate stats using correct status path
   const stats = {
     total: requests.length,
     pending: requests.filter((r) => getVerificationStatus(r) === "pending").length,
