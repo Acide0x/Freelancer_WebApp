@@ -1107,25 +1107,39 @@ exports.fundEscrow = async (req, res) => {
 /**
  * PATCH /jobs/:id/start-work
  * Provider marks work as started (after escrow funded)
+ * - Sets provider availability to "busy"
+ * - Adds job to provider's activeJobs
+ * - Creates job-specific chat conversation
+ * - Notifies both parties via WebSocket
  */
 exports.startWork = async (req, res) => {
   if (!req.user || !req.user.id) {
     return res.status(401).json({ success: false, message: "Authentication required" });
   }
 
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const { id: jobId } = req.params;
     const providerId = req.user.id;
 
+    // Validate job ID format
     if (!mongoose.Types.ObjectId.isValid(jobId)) {
       return res.status(400).json({ success: false, message: "Invalid job ID format" });
     }
 
-    const job = await Job.findById(jobId);
+    // Fetch job with populated references
+    const job = await Job.findById(jobId)
+      .populate("client", "fullName email")
+      .populate("assignedWorker", "fullName email")
+      .session(session);
+
     if (!job) {
       return res.status(404).json({ success: false, message: "Job not found" });
     }
 
+    // Authorization: Only assigned provider can start work
     if (!isAssignedWorker(job, providerId)) {
       return res.status(403).json({
         success: false,
@@ -1133,6 +1147,7 @@ exports.startWork = async (req, res) => {
       });
     }
 
+    // Business logic: Escrow must be funded
     if (!job.escrow.funded) {
       return res.status(400).json({
         success: false,
@@ -1140,6 +1155,7 @@ exports.startWork = async (req, res) => {
       });
     }
 
+    // Business logic: Job must be in escrow_funded state
     if (job.status !== "escrow_funded") {
       return res.status(400).json({
         success: false,
@@ -1147,29 +1163,120 @@ exports.startWork = async (req, res) => {
       });
     }
 
+    // 🔄 Update job status
     job.status = "in_progress";
-    await job.save();
 
-    console.log(`🔔 Notify client ${job.client} that work has started on job ${jobId}`);
+    // 🔄 Update provider: Set to busy + add to activeJobs
+    await User.findByIdAndUpdate(
+      providerId,
+      {
+        $set: { "providerDetails.availabilityStatus": "busy" },
+        $addToSet: { activeJobs: job._id } // Requires activeJobs field in User schema
+      },
+      { session, runValidators: true }
+    );
+
+    // 💬 Create job-specific chat conversation (if not exists)
+    const { ChatConversation } = require("../models/chat.model");
+
+    await ChatConversation.findOneAndUpdate(
+      { jobId: job._id },
+      {
+        jobId: job._id,
+        type: "job",
+        title: `Job #${job._id.toString().slice(-6)} - ${job.title}`,
+        participants: [job.client._id, providerId],
+        lastMessage: {
+          text: "Work has started! You can now chat about this job.",
+          sender: null,
+          timestamp: new Date()
+        }
+      },
+      { upsert: true, new: true, session }
+    );
+
+    await job.save({ session });
+    await session.commitTransaction();
+
+    // 🔔 Real-time notifications via WebSocket
+    try {
+      const { getIO } = require("../socket/server");
+      const io = getIO();
+
+      const notificationPayload = {
+        jobId: job._id,
+        status: "in_progress",
+        message: "Work has started! Chat is now available.",
+        chatRoomId: `job:${job._id}`,
+        timestamp: new Date()
+      };
+
+      // Notify client
+      io.to(`user:${job.client._id}`).emit("job:status_updated", {
+        ...notificationPayload,
+        from: "system",
+        action: "work_started"
+      });
+
+      // Notify provider (echo confirmation)
+      io.to(`user:${providerId}`).emit("job:status_updated", {
+        ...notificationPayload,
+        from: "system",
+        action: "work_started_confirmed"
+      });
+
+      // Auto-join both to the job chat room for immediate messaging
+      // (Frontend should listen and call socket.join(`job:${jobId}`) on receipt)
+
+      console.log(`🔔 Notified client ${job.client._id} and provider ${providerId} via WebSocket`);
+    } catch (socketErr) {
+      // Non-critical: Don't fail the request if WebSocket notification fails
+      console.warn("⚠️ WebSocket notification failed (non-critical):", socketErr.message);
+    }
+
+    console.log(`✅ Work started on job ${jobId} by provider ${providerId}`);
 
     res.status(200).json({
       success: true,
-      message: "Work started successfully",
-      job: { _id: job._id, status: job.status }
+      message: "Work started successfully. Chat is now available.",
+      job: {
+        _id: job._id,
+        status: job.status,
+        chatAvailable: true
+      },
+      chatRoomId: `job:${job._id}`
     });
+
   } catch (error) {
+    await session.abortTransaction();
     console.error("💥 Start work failed:", error);
+
+    if (error.name === "ValidationError") {
+      const messages = Object.values(error.errors).map(e => e.message);
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed",
+        details: messages
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: "Failed to start work",
       error: process.env.NODE_ENV === "development" ? error.message : "Server error"
     });
+  } finally {
+    session.endSession();
   }
 };
 
 /**
  * PATCH /jobs/:id/complete
  * Either party can request completion (with optional review from client)
+ * - Sets provider availability back to "available"
+ * - Removes job from provider's activeJobs
+ * - Notifies via WebSocket that chat is archiving
+ * - Handles optional client review and rating aggregation
  */
 exports.completeJob = async (req, res) => {
   if (!req.user || !req.user.id) {
@@ -1184,11 +1291,17 @@ exports.completeJob = async (req, res) => {
     const { rating, comment } = req.body;
     const userId = req.user.id;
 
+    // Validate job ID format
     if (!mongoose.Types.ObjectId.isValid(jobId)) {
       return res.status(400).json({ success: false, message: "Invalid job ID format" });
     }
 
-    const job = await Job.findById(jobId).session(session);
+    // Fetch job with populated references
+    const job = await Job.findById(jobId)
+      .populate("client", "fullName email")
+      .populate("assignedWorker", "fullName email providerDetails")
+      .session(session);
+
     if (!job) {
       return res.status(404).json({ success: false, message: "Job not found" });
     }
@@ -1196,53 +1309,74 @@ exports.completeJob = async (req, res) => {
     const isClient = isJobOwner(job, userId);
     const isProvider = isAssignedWorker(job, userId);
 
+    // Authorization: Must be client OR assigned provider
     if (!isClient && !isProvider) {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
 
+    // Business logic: Only jobs in_progress can be completed
     if (job.status !== "in_progress") {
       return res.status(400).json({
         success: false,
-        message: `Only jobs 'in_progress' can be completed`
+        message: `Only jobs with status 'in_progress' can be completed`
       });
     }
 
-    // Update job status
+    // 🔄 Update job status and escrow
     job.status = "completed";
     job.escrow.releasedAt = new Date(); // Auto-release for MVP
 
-    // Handle optional review (if client is completing)
-    if (isClient && rating !== undefined) {
+    // ⭐ Handle optional review (only if client is completing)
+    if (isClient && rating !== undefined && rating !== null) {
       const ratingNum = parseFloat(rating);
+
       if (isNaN(ratingNum) || ratingNum < 1 || ratingNum > 5) {
         return res.status(400).json({
           success: false,
-          message: "Rating must be between 1 and 5"
+          message: "Rating must be a number between 1 and 5"
         });
       }
 
       job.review = {
         rating: ratingNum,
-        comment: comment?.trim(),
+        comment: comment?.trim() || "",
         date: new Date()
       };
 
-      // Update provider's aggregate rating
-      const provider = await User.findById(job.assignedWorker).session(session);
-      if (provider) {
-        const totalRating = (provider.ratings.average * provider.ratings.count) + ratingNum;
-        provider.ratings.count += 1;
-        provider.ratings.average = parseFloat((totalRating / provider.ratings.count).toFixed(2));
-        await provider.save({ session });
+      // 🔄 Update provider's aggregate rating (atomic calculation)
+      if (job.assignedWorker) {
+        const provider = await User.findById(job.assignedWorker).session(session);
+
+        if (provider) {
+          const currentAvg = provider.ratings?.average || 0;
+          const currentCount = provider.ratings?.count || 0;
+
+          // Calculate new average: (old_sum + new_rating) / new_count
+          const newSum = (currentAvg * currentCount) + ratingNum;
+          const newCount = currentCount + 1;
+          const newAverage = parseFloat((newSum / newCount).toFixed(2));
+
+          provider.ratings = {
+            average: newAverage,
+            count: newCount
+          };
+
+          await provider.save({ session });
+          console.log(`⭐ Updated provider ${job.assignedWorker} rating: ${newAverage} (${newCount} reviews)`);
+        }
       }
     }
 
-    // CRITICAL: Update provider availability → BACK TO AVAILABLE when job ends
+    // 🔄 CRITICAL: Update provider availability → BACK TO AVAILABLE
+    // Also remove job from activeJobs array
     if (job.assignedWorker) {
       await User.findByIdAndUpdate(
         job.assignedWorker,
-        { availabilityStatus: "available" },
-        { session }
+        {
+          $set: { "providerDetails.availabilityStatus": "available" },
+          $pull: { activeJobs: job._id }
+        },
+        { session, runValidators: true }
       );
       console.log(`🔄 Provider ${job.assignedWorker} availability set to "available" after job completion`);
     }
@@ -1250,7 +1384,47 @@ exports.completeJob = async (req, res) => {
     await job.save({ session });
     await session.commitTransaction();
 
-    console.log(` Job ${jobId} completed. Notify client ${job.client} and provider ${job.assignedWorker}`);
+    // 🔔 Real-time notifications via WebSocket
+    try {
+      const { getIO } = require("../socket/server");
+      const io = getIO();
+
+      const notificationPayload = {
+        jobId: job._id,
+        status: "completed",
+        message: isClient
+          ? "Job marked complete by client. Thank you!"
+          : "Job marked complete. Awaiting client confirmation.",
+        chatArchived: true,
+        reviewSubmitted: isClient && job.review ? true : false,
+        timestamp: new Date()
+      };
+
+      // Notify both parties
+      const recipients = [job.client._id, job.assignedWorker?._id].filter(Boolean);
+
+      recipients.forEach(recipientId => {
+        io.to(`user:${recipientId}`).emit("job:status_updated", {
+          ...notificationPayload,
+          from: isClient ? "client" : "provider",
+          action: "job_completed"
+        });
+      });
+
+      // Notify chat room that conversation is archiving (read-only mode)
+      io.to(`job:${job._id}`).emit("job:chat_archived", {
+        message: "Job completed. This chat is now archived for reference.",
+        canSend: false,
+        timestamp: new Date()
+      });
+
+      console.log(`🔔 Notified ${recipients.length} participants via WebSocket about job completion`);
+    } catch (socketErr) {
+      // Non-critical: Don't fail the request if WebSocket notification fails
+      console.warn("⚠️ WebSocket notification failed (non-critical):", socketErr.message);
+    }
+
+    console.log(`✅ Job ${jobId} completed successfully`);
 
     res.status(200).json({
       success: true,
@@ -1259,12 +1433,32 @@ exports.completeJob = async (req, res) => {
         _id: job._id,
         status: job.status,
         review: job.review,
-        escrow: job.escrow
-      }
+        escrow: job.escrow,
+        chatArchived: true
+      },
+      providerAvailabilityUpdated: true
     });
+
   } catch (error) {
     await session.abortTransaction();
     console.error("💥 Complete job failed:", error);
+
+    if (error.name === "ValidationError") {
+      const messages = Object.values(error.errors).map(e => e.message);
+      return res.status(400).json({
+        success: false,
+        message: "Validation failed",
+        details: messages
+      });
+    }
+
+    if (error.name === "MongoServerError" && error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: "Duplicate entry error. Please try again."
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: "Failed to complete job",

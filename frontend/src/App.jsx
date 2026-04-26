@@ -17,6 +17,7 @@ import WorkersDashboardPage from "./pages/WorkersDashboardPage";
 import AdminDashboardClient from "./pages/AdminDashboardPage";
 import DiscussionForum from "./pages/DiscussionPostListing";
 import DiscussionPage from "./pages/DiscussionPostDetailsPage";    
+import ActiveJobsPage from "./pages/ActiveJobsPage"; // ✅ NEW: Active Jobs Dashboard with Chat
 
 // Components
 import Navbar from './components/Navbar';
@@ -44,7 +45,11 @@ export default function App() {
             
             {/* Job Routes */}
             <Route path="/jobs" element={<JobsPage />} />
-            <Route path="/jobs/:id" element={<JobDetailPage />} /> {/*  NEW ROUTE */}
+            <Route path="/jobs/:id" element={<JobDetailPage />} />
+            
+            {/*  Active Jobs Dashboard with Real-Time Chat */}
+            <Route path="/jobs/active" element={<ActiveJobsPage />} />
+            <Route path="/jobs/active/:jobId" element={<ActiveJobsPage />} />
             
             {/* Worker Routes */}
             <Route path="/workers" element={<WorkersPage />} />
@@ -60,6 +65,7 @@ export default function App() {
             {/* Discussion Forum Route */}
             <Route path="/discussions" element={<DiscussionForum />} />
             <Route path="/discussions/:id" element={<DiscussionPage />} /> 
+            
             {/* Catch-all fallback */}
             <Route path="*" element={<HomePage />} />
           </Routes>
