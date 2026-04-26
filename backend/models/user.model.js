@@ -62,7 +62,14 @@ const userSchema = new mongoose.Schema(
       address: String
     },
 
-
+    /* ================= ACTIVE JOBS TRACKING (for providers) ================= */
+    // Tracks jobs currently in 'in_progress' status for this provider
+    // Auto-managed by job.controller.js: startWork/completeJob/cancelJob
+    activeJobs: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Job",
+      comment: "Jobs currently in 'in_progress' status for this provider"
+    }],
 
     /* ================= PROVIDER DETAILS ================= */
     providerDetails: {
@@ -147,6 +154,7 @@ const userSchema = new mongoose.Schema(
       }],
 
       // === Availability Status ===
+      // AUTO-MANAGED: "busy" when job starts, "available" when job ends/cancels
       availabilityStatus: {
         type: String,
         enum: ["available", "busy", "offline"],
@@ -328,18 +336,33 @@ userSchema.index({ "providerDetails.isVerified": 1 });
 userSchema.index({ "ratings.average": -1 });
 userSchema.index({ kycVerified: 1 });
 userSchema.index({ deletedAt: 1 });
+userSchema.index({ activeJobs: 1 }); // ✅ NEW: Index for activeJobs queries
+
+/* ================= VIRTUALS ================= */
+// Virtual: Count of active jobs (for quick frontend display)
+userSchema.virtual("activeJobsCount").get(function() {
+  return Array.isArray(this.activeJobs) ? this.activeJobs.length : 0;
+});
+
+// Virtual: Is provider currently busy with any job?
+userSchema.virtual("isCurrentlyBusy").get(function() {
+  return this.role === "provider" && 
+         this.providerDetails?.availabilityStatus === "busy" &&
+         this.activeJobsCount > 0;
+});
 
 /* ================= OUTPUT SANITIZATION ================= */
 const sanitizeOutput = (ret) => {
   delete ret.password;
   delete ret.passwordResetToken;
   delete ret.emailVerificationToken;
+  // Keep activeJobs in output - useful for provider dashboard
   return ret;
 };
 
 userSchema.set("toJSON", {
   transform: (_, ret) => sanitizeOutput(ret),
-  virtuals: true,
+  virtuals: true, // ✅ Include virtuals like activeJobsCount
 });
 
 userSchema.set("toObject", {
@@ -347,4 +370,86 @@ userSchema.set("toObject", {
   virtuals: true,
 });
 
-module.exports = mongoose.model("User", userSchema)
+/* ================= INSTANCE METHODS ================= */
+// Check if provider can accept new jobs
+userSchema.methods.canAcceptJobs = function() {
+  if (this.role !== "provider") return false;
+  if (!this.isActive || this.isSuspended) return false;
+  if (this.providerDetails?.availabilityStatus !== "available") return false;
+  
+  // Optional: Limit concurrent jobs (e.g., max 3 active)
+  const MAX_CONCURRENT_JOBS = process.env.MAX_CONCURRENT_JOBS || 3;
+  return this.activeJobsCount < MAX_CONCURRENT_JOBS;
+};
+
+// Get summary for provider card/list view
+userSchema.methods.getProviderSummary = function() {
+  const pd = this.providerDetails || {};
+  return {
+    id: this._id,
+    name: this.fullName,
+    avatar: this.avatar,
+    headline: pd.headline,
+    primarySkill: pd.skills?.[0]?.name,
+    experience: pd.experienceYears,
+    rating: this.ratings?.average,
+    reviewsCount: this.ratings?.count,
+    rate: pd.rate,
+    availability: this.providerDetails?.availabilityStatus,
+    isVerified: pd.isVerified,
+    activeJobsCount: this.activeJobsCount, // ✅ Now included
+    location: this.location?.address
+  };
+};
+
+/* ================= STATIC METHODS ================= */
+// Find available providers near a location with specific skills
+userSchema.statics.findAvailableProviders = async function({ 
+  coordinates, 
+  radiusKm, 
+  skills, 
+  limit = 20 
+}) {
+  const matchStage = {
+    role: "provider",
+    isActive: true,
+    isSuspended: { $ne: true },
+    "providerDetails.availabilityStatus": "available",
+    "providerDetails.isProfilePublic": { $ne: false }
+  };
+
+  if (skills?.length > 0) {
+    matchStage["providerDetails.skills.name"] = { $in: skills };
+  }
+
+  const pipeline = [
+    { $match: matchStage },
+    {
+      $geoNear: {
+        near: { type: "Point", coordinates },
+        distanceField: "distance",
+        maxDistance: radiusKm * 1000, // meters
+        spherical: true
+      }
+    },
+    { $limit: limit },
+    {
+      $project: {
+        fullName: 1,
+        avatar: 1,
+        "providerDetails.headline": 1,
+        "providerDetails.skills": 1,
+        "providerDetails.rate": 1,
+        "providerDetails.availabilityStatus": 1,
+        "providerDetails.isVerified": 1,
+        ratings: 1,
+        location: 1,
+        activeJobsCount: { $size: "$activeJobs" } // ✅ Include active jobs count
+      }
+    }
+  ];
+
+  return await this.aggregate(pipeline);
+};
+
+module.exports = mongoose.model("User", userSchema);

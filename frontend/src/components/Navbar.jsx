@@ -1,3 +1,4 @@
+// src/components/Navbar.jsx
 import { useState, useEffect, useRef } from 'react';
 import {
   Bell,
@@ -9,6 +10,7 @@ import {
   Settings,
   MessageSquare,
   Briefcase,
+  ClipboardList, // ✅ New icon for Active Jobs
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -188,6 +190,19 @@ export default function Navbar() {
                     </DropdownMenuItem>
                   )}
 
+                  {/* 🔹 ✅ ACTIVE JOBS - For BOTH Provider AND Client (NEW) */}
+                  {(user.role === "provider" || user.role === "customer") && (
+                    <DropdownMenuItem asChild>
+                      <Link 
+                        to="/jobs/active" 
+                        className="flex items-center text-sm px-3 py-2 rounded-md"
+                      >
+                        <ClipboardList className="h-4 w-4 mr-2" />
+                        Active Jobs
+                      </Link>
+                    </DropdownMenuItem>
+                  )}
+
                   <DropdownMenuItem asChild>
                     <Link to="/workersdashboard" className="flex items-center text-sm px-3 py-2 rounded-md">
                       <MessageSquare className="h-4 w-4 mr-2" />
@@ -287,6 +302,20 @@ export default function Navbar() {
                       <Button variant="outline" className="w-full justify-start">
                         <Briefcase className="w-4 h-4 mr-2" />
                         My Applications
+                      </Button>
+                    </Link>
+                  )}
+
+                  {/* 🔹 ✅ ACTIVE JOBS - For BOTH Provider AND Client (Mobile) - NEW */}
+                  {(user.role === "provider" || user.role === "customer") && (
+                    <Link 
+                      to="/jobs/active" 
+                      className="w-full" 
+                      onClick={() => setIsOpen(false)}
+                    >
+                      <Button variant="outline" className="w-full justify-start">
+                        <ClipboardList className="w-4 h-4 mr-2" />
+                        Active Jobs
                       </Button>
                     </Link>
                   )}
