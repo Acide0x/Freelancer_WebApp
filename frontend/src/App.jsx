@@ -45,11 +45,10 @@ export default function App() {
             
             {/* Job Routes */}
             <Route path="/jobs" element={<JobsPage />} />
-            <Route path="/jobs/:id" element={<JobDetailPage />} />
-            
-            {/*  Active Jobs Dashboard with Real-Time Chat */}
+            {/* ⚠️ Static segments MUST come before /:id — React Router matches top-down */}
             <Route path="/jobs/active" element={<ActiveJobsPage />} />
             <Route path="/jobs/active/:jobId" element={<ActiveJobsPage />} />
+            <Route path="/jobs/:id" element={<JobDetailPage />} />
             
             {/* Worker Routes */}
             <Route path="/workers" element={<WorkersPage />} />

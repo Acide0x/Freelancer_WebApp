@@ -1,4 +1,5 @@
-const Job = require("../models/job.model");
+// controllers/job.controller.js
+const Job  = require("../models/job.model");
 const User = require("../models/user.model");
 const mongoose = require("mongoose");
 
@@ -6,211 +7,171 @@ const mongoose = require("mongoose");
 // 🔁 HELPERS & UTILITIES
 // ============================================================================
 
-// Valid status transitions map
+/**
+ * Valid status transitions.
+ *
+ * open → pending_provider_acceptance  (client selects provider)
+ * pending_provider_acceptance → in_progress  (provider accepts)
+ * in_progress → escrow_funded  (client pays admin mid-work)
+ * in_progress → completed      (if payment already done or admin confirms)
+ * escrow_funded → completed    (admin releases payment)
+ * anything non-terminal → cancelled
+ */
 const VALID_TRANSITIONS = {
-  open: ["assigned", "cancelled", "pending_provider_acceptance"],
-  assigned: ["pending_provider_acceptance", "cancelled"],
-  pending_provider_acceptance: ["escrow_funded", "open", "cancelled"],
-  escrow_funded: ["in_progress", "cancelled"],
-  in_progress: ["completed", "disputed", "cancelled"],
-  completed: [],
-  cancelled: [],
-  disputed: ["resolved", "cancelled"],
-  resolved: []
+  open:                        ["pending_provider_acceptance", "cancelled"],
+  pending_provider_acceptance: ["in_progress", "open", "cancelled"],
+  in_progress:                 ["escrow_funded", "completed", "disputed", "cancelled"],
+  escrow_funded:               ["completed", "disputed", "cancelled"],
+  completed:                   [],
+  cancelled:                   [],
+  disputed:                    ["resolved", "cancelled"],
+  resolved:                    [],
 };
 
 const isValidTransition = (from, to) =>
-  VALID_TRANSITIONS[from]?.includes(to) || false;
+  VALID_TRANSITIONS[from]?.includes(to) ?? false;
 
-// Authorization helpers
-const isJobOwner = (job, userId) => {
-  if (!userId || !job?.client) return false;
-  return job.client.toString() === userId.toString();
-};
+// ─── Auth helpers ────────────────────────────────────────────────────────────
+const isJobOwner      = (job, userId) =>
+  !!(userId && job?.client && job.client.toString() === userId.toString());
 
 const isAssignedWorker = (job, userId) => {
   if (!userId || !job?.assignedWorker) return false;
-  return job.assignedWorker.toString() === userId.toString();
+  // Handle both raw ObjectId and populated object ({ _id, fullName, ... })
+  const workerId = job.assignedWorker._id ?? job.assignedWorker;
+  return workerId.toString() === userId.toString();
 };
 
-// Check if job is in pending state (client can still update)
-const isJobPending = (job) => job?.status === "pending_provider_acceptance";
-
-//  NEW: Determine available actions for current user on this job
+// ─── Available actions ────────────────────────────────────────────────────────
 const getAvailableActions = (job, user) => {
-  if (!user || !user._id) return [];
+  if (!user?._id) return [];
 
-  const userId = user._id.toString();
-  const isClient = isJobOwner(job, userId);
+  const userId     = (user._id ?? user.id).toString(); // JWT sets .id; Mongoose sets ._id — handle both
+  const isClient   = isJobOwner(job, userId);
   const isProvider = isAssignedWorker(job, userId);
-  const actions = [];
+  const actions    = [];
 
   switch (job.status) {
     case "open":
-      if (user.role === "provider" && !isClient) {
-        actions.push("apply");
-      }
-      if (isClient) {
-        actions.push("update", "cancel");
-      }
+      if (user.role === "provider" && !isClient) actions.push("apply");
+      if (isClient) actions.push("update", "cancel");
       break;
 
     case "pending_provider_acceptance":
-      // ONLY assigned provider can accept/decline
-      if (isProvider) {
-        actions.push("accept_offer", "decline_offer");
-      }
-      // Client can cancel or update job details
-      if (isClient) {
-        actions.push("cancel", "update");
-      }
-      break;
-
-    case "assigned":
-      // This is intermediate state after client accepts application
-      if (isProvider) {
-        actions.push("accept_offer", "decline_offer");
-      }
-      if (isClient) {
-        actions.push("cancel");
-      }
-      break;
-
-    case "escrow_funded":
-      if (isProvider) {
-        actions.push("start_work");
-      }
-      if (isClient && !job.escrow?.funded) {
-        actions.push("fund_escrow");
-      }
+      if (isProvider) actions.push("accept_offer", "decline_offer");
+      if (isClient)   actions.push("cancel");
       break;
 
     case "in_progress":
-      if (isClient || isProvider) {
-        actions.push("complete_job");
-      }
-      if (isClient || isProvider) {
-        actions.push("cancel");
-      }
+      // Client can pay admin (fund escrow) at any point during work
+      if (isClient && !job.escrow?.funded) actions.push("fund_escrow");
+      if (isClient || isProvider)          actions.push("complete_job", "cancel");
+      break;
+
+    case "escrow_funded":
+      // Escrow secured; either party can still complete or cancel
+      if (isClient || isProvider) actions.push("complete_job", "cancel");
       break;
 
     case "completed":
-      if (isClient && !job.review) {
-        actions.push("submit_review");
-      }
+      if (isClient && !job.review?.rating) actions.push("submit_review");
       break;
 
-    case "cancelled":
-    case "disputed":
-    case "resolved":
-      // No actions available
+    default:
       break;
   }
 
   return actions;
 };
 
-// Sanitize job output for public/client/provider views
+// ─── Output sanitizer ────────────────────────────────────────────────────────
 const sanitizeJob = (job, requestingUser) => {
   if (!job) return null;
-  const obj = job.toObject ? job.toObject() : job;
+  const obj = job.toObject ? job.toObject() : { ...job };
 
-  if (!requestingUser || !requestingUser._id) {
+  const stripApplicationDetails = (apps) =>
+    (apps || []).map(app => ({ _id: app._id, worker: app.worker, appliedAt: app.appliedAt }));
+
+  if (!requestingUser?._id) {
     delete obj.escrow;
-    if (obj.applications) {
-      obj.applications = obj.applications.map(app => ({
-        _id: app._id,
-        worker: app.worker,
-        appliedAt: app.appliedAt
-      }));
-    }
+    obj.applications = stripApplicationDetails(obj.applications);
     return obj;
   }
 
   if (requestingUser.role !== "admin") {
-    const requestingUserId = requestingUser._id;
-    const isParticipant =
-      (job.client?.toString() === requestingUserId.toString()) ||
-      (job.assignedWorker?.toString() === requestingUserId.toString());
+    const uid = (requestingUser._id ?? requestingUser.id).toString(); // JWT sets .id
+    // job.client / job.assignedWorker may be populated objects OR raw ObjectIds
+    // Using .toString() on a populated object gives "[object Object]" — always extract _id first
+    const clientId = (job.client?._id ?? job.client)?.toString();
+    const workerId = (job.assignedWorker?._id ?? job.assignedWorker)?.toString();
+    const isParticipant = clientId === uid || workerId === uid;
 
     if (!isParticipant) {
       delete obj.escrow;
-      if (obj.applications && job.client?.toString() !== requestingUserId.toString()) {
-        obj.applications = obj.applications.map(app => ({
-          _id: app._id,
-          worker: app.worker,
-          appliedAt: app.appliedAt
-        }));
-      }
+      obj.applications = stripApplicationDetails(obj.applications);
     }
   }
 
-  //  Add available actions for frontend
   obj.availableActions = getAvailableActions(job, requestingUser);
-
   return obj;
 };
 
-// Safe pagination parser
+// ─── Query helpers ───────────────────────────────────────────────────────────
 const parsePagination = (query) => {
-  const page = Math.max(1, parseInt(query.page) || 1);
+  const page  = Math.max(1, parseInt(query.page)  || 1);
   const limit = Math.min(100, Math.max(1, parseInt(query.limit) || 20));
-  const skip = (page - 1) * limit;
-  return { page, limit, skip };
+  return { page, limit, skip: (page - 1) * limit };
 };
 
-// Safe sort parser with whitelist
-const parseSort = (sortBy) => {
-  const allowedFields = ["createdAt", "updatedAt", "budget", "title", "urgency", "preferredDate"];
-  const field = sortBy.startsWith("-") ? sortBy.slice(1) : sortBy;
-  const direction = sortBy.startsWith("-") ? -1 : 1;
-  if (!allowedFields.includes(field)) {
-    return { createdAt: -1 };
-  }
-  return { [field]: direction };
+const parseSort = (sortBy = "createdAt") => {
+  const allowed = ["createdAt", "updatedAt", "budget", "title", "urgency", "preferredDate"];
+  const desc    = sortBy.startsWith("-");
+  const field   = desc ? sortBy.slice(1) : sortBy;
+  return allowed.includes(field) ? { [field]: desc ? -1 : 1 } : { createdAt: -1 };
 };
 
-// Safe budget filter builder
 const buildBudgetFilter = (minBudget, maxBudget) => {
   const budget = {};
-  const min = parseFloat(minBudget);
-  const max = parseFloat(maxBudget);
+  const min    = parseFloat(minBudget);
+  const max    = parseFloat(maxBudget);
   if (!isNaN(min)) budget.$gte = min;
   if (!isNaN(max)) budget.$lte = max;
-  return Object.keys(budget).length > 0 ? budget : null;
+  return Object.keys(budget).length ? budget : null;
 };
 
-// Safe geospatial filter builder
 const buildGeoFilter = (latitude, longitude, radiusKm) => {
-  const lat = parseFloat(latitude);
-  const lng = parseFloat(longitude);
+  const lat    = parseFloat(latitude);
+  const lng    = parseFloat(longitude);
   const radius = parseFloat(radiusKm);
-  if (isNaN(lat) || isNaN(lng) || isNaN(radius) || radius <= 0) {
-    return null;
-  }
-  return {
-    $geoWithin: {
-      $centerSphere: [
-        [lng, lat],
-        radius / 6371
-      ]
-    }
-  };
+  if (isNaN(lat) || isNaN(lng) || isNaN(radius) || radius <= 0) return null;
+  return { $geoWithin: { $centerSphere: [[lng, lat], radius / 6371] } };
 };
+
+/** Parse comma-separated or array status query param */
+const parseStatusFilter = (status) => {
+  if (!status) return null;
+  const statuses = Array.isArray(status)
+    ? status.map(s => s.trim()).filter(Boolean)
+    : status.split(",").map(s => s.trim()).filter(Boolean);
+  return statuses.length === 1 ? statuses[0] : { $in: statuses };
+};
+
+// ─── Base filter (excludes soft-deleted records) ─────────────────────────────
+const notDeleted = { isDeleted: { $ne: true } };
 
 // ============================================================================
-// 📝 JOB CREATION & LISTING
+// 📝 JOB CREATION
 // ============================================================================
 
 /**
  * POST /jobs/add
- * Create a job - supports both flows via optional assignedWorker
+ * Create a job.
+ *   Flow A (direct hire): client supplies assignedWorker → status = pending_provider_acceptance
+ *   Flow B (open post)  : no assignedWorker              → status = open
+ *
+ * isLive is NOT set here — it becomes true only once escrow is funded.
  */
 exports.createJob = async (req, res) => {
-  if (!req.user || !req.user.id) {
-    return res.status(401).json({ success: false, message: "Authentication required" });
-  }
-
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -219,392 +180,378 @@ exports.createJob = async (req, res) => {
       title, description, category, address, city,
       budget, estimatedDuration, durationUnit,
       urgency, preferredDate, assignedWorker,
-      latitude, longitude
+      latitude, longitude,
     } = req.body;
 
     // Required field validation
-    const required = { title, description, category, address, budget };
-    for (const [field, value] of Object.entries(required)) {
-      if (!value || (typeof value === "string" && value.trim() === "")) {
+    for (const [field, value] of Object.entries({ title, description, category, address, budget })) {
+      if (!value || (typeof value === "string" && !value.trim())) {
+        await session.abortTransaction();
         return res.status(400).json({
           success: false,
-          message: `${field.charAt(0).toUpperCase() + field.slice(1)} is required`
+          message: `${field.charAt(0).toUpperCase() + field.slice(1)} is required`,
         });
       }
     }
 
     const budgetNum = parseFloat(budget);
     if (isNaN(budgetNum) || budgetNum <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Budget must be a valid positive number"
-      });
+      await session.abortTransaction();
+      return res.status(400).json({ success: false, message: "Budget must be a valid positive number" });
     }
 
-    // Validate assignedWorker if provided (Flow A: Direct Hire)
+    // Validate provider for direct hire (Flow A)
     if (assignedWorker) {
+      if (!mongoose.Types.ObjectId.isValid(assignedWorker)) {
+        await session.abortTransaction();
+        return res.status(400).json({ success: false, message: "Invalid provider ID" });
+      }
       const provider = await User.findById(assignedWorker).session(session);
       if (!provider || provider.role !== "provider") {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid provider selected"
-        });
+        await session.abortTransaction();
+        return res.status(400).json({ success: false, message: "Invalid provider selected" });
       }
-      if (provider.availabilityStatus === "offline") {
-        console.log(`📝 Provider ${assignedWorker} is offline - hire request will queue`);
+      if (!provider.isActive || provider.isSuspended) {
+        await session.abortTransaction();
+        return res.status(400).json({ success: false, message: "Provider account is unavailable" });
       }
     }
 
-    // Build location object
-    const location = {
-      address: address.trim(),
-      city: city?.trim(),
-    };
+    // Build location
+    const location = { address: address.trim(), city: city?.trim() };
     if (latitude && longitude) {
       const lat = parseFloat(latitude);
       const lng = parseFloat(longitude);
       if (!isNaN(lat) && !isNaN(lng)) {
-        location.latitude = lat;
-        location.longitude = lng;
+        location.latitude    = lat;
+        location.longitude   = lng;
+        location.coordinates = [lng, lat]; // GeoJSON order
       }
     }
 
-    // Build estimatedDuration if provided
+    // Build estimatedDuration
     const estimatedDurationObj = {};
     if (estimatedDuration !== undefined && estimatedDuration !== "") {
       const val = parseFloat(estimatedDuration);
       if (!isNaN(val) && val > 0) {
         estimatedDurationObj.value = val;
-        estimatedDurationObj.unit = ["days", "hours"].includes(durationUnit)
-          ? durationUnit
-          : "hours";
+        estimatedDurationObj.unit  = ["days", "hours"].includes(durationUnit) ? durationUnit : "hours";
       }
     }
 
-    // Determine initial status based on flow
-    const initialStatus = assignedWorker
-      ? "pending_provider_acceptance"
-      : "open";
-
     const jobData = {
-      client: req.user.id,
-      title: title.trim(),
-      description: description.trim(),
+      client:         req.user.id,
+      title:          title.trim(),
+      description:    description.trim(),
       category,
       location,
-      budget: budgetNum,
-      urgency: urgency || "medium",
-      preferredDate: preferredDate || undefined,
-      escrow: { amount: budgetNum, funded: false },
-      status: initialStatus,
+      budget:         budgetNum,
+      urgency:        urgency || "medium",
+      preferredDate:  preferredDate || undefined,
+      escrow:         { amount: budgetNum, funded: false },
+      // Flow A → awaiting provider response; Flow B → open for applicants
+      status:         assignedWorker ? "pending_provider_acceptance" : "open",
       assignedWorker: assignedWorker || null,
-      isActive: true,
+      // isLive stays false — provider hasn't committed yet
+      isLive:         false,
+      isDeleted:      false,
     };
 
-    if (Object.keys(estimatedDurationObj).length > 0) {
+    if (Object.keys(estimatedDurationObj).length) {
       jobData.estimatedDuration = estimatedDurationObj;
     }
 
     const [job] = await Job.create([jobData], { session });
     await session.commitTransaction();
 
-    // Notify provider if direct hire
     if (assignedWorker) {
       console.log(`🔔 Notify provider ${assignedWorker} about direct hire job ${job._id}`);
     }
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: assignedWorker
         ? "Job created. Awaiting provider acceptance."
         : "Job posted successfully. Providers can now apply.",
-      job: sanitizeJob(job, req.user),
-      flow: assignedWorker ? "direct_hire" : "open_application"
+      job:  sanitizeJob(job, req.user),
+      flow: assignedWorker ? "direct_hire" : "open_application",
     });
   } catch (error) {
     await session.abortTransaction();
-    console.error("💥 Job creation failed:", error);
+    console.error("💥 createJob:", error);
     if (error.name === "ValidationError") {
-      const messages = Object.values(error.errors).map(e => e.message);
       return res.status(400).json({
         success: false,
         message: "Validation failed",
-        details: messages
+        details: Object.values(error.errors).map(e => e.message),
       });
     }
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to create job",
-      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error",
     });
   } finally {
     session.endSession();
   }
 };
 
+// ============================================================================
+// 📋 JOB LISTING / FEEDS
+// ============================================================================
+
 /**
  * GET /jobs
- * Get all active OPEN jobs (public listing - excludes direct hires)
+ * Public feed — open jobs only, no auth required.
  */
 exports.getAllJobs = async (req, res) => {
   try {
-    const {
-      category, status, city, minBudget, maxBudget,
-      sortBy = "createdAt",
-      latitude, longitude, radiusKm
-    } = req.query;
-
+    const { category, city, minBudget, maxBudget, sortBy = "createdAt", latitude, longitude, radiusKm } = req.query;
     const { page, limit, skip } = parsePagination(req.query);
-    const sortOption = parseSort(sortBy);
 
-    //  CRITICAL: Only show OPEN jobs WITHOUT assigned worker (public feed)
     const filter = {
-      isActive: true,
-      status: "open",
-      assignedWorker: null
+      ...notDeleted,
+      status:         "open",
+      assignedWorker: null,
     };
 
-    if (category) filter.category = category;
-    if (city && city.trim()) {
-      filter["location.city"] = new RegExp(city.trim(), "i");
-    }
+    if (category)    filter.category           = category;
+    if (city?.trim()) filter["location.city"]  = new RegExp(city.trim(), "i");
 
-    // Budget filter
     const budgetFilter = buildBudgetFilter(minBudget, maxBudget);
-    if (budgetFilter) {
-      filter.budget = budgetFilter;
-    }
+    if (budgetFilter) filter.budget = budgetFilter;
 
-    // Geospatial filter
     const geoFilter = buildGeoFilter(latitude, longitude, radiusKm);
-    if (geoFilter) {
-      filter["location.coordinates"] = geoFilter;
-    }
+    if (geoFilter) filter["location.coordinates"] = geoFilter;
 
     const [jobs, total] = await Promise.all([
       Job.find(filter)
-        .populate("client", "fullName avatar isVerified")
-        .populate("assignedWorker", "fullName avatar ratings")
-        .sort(sortOption)
+        .populate("client", "fullName avatar kycVerified")
+        .sort(parseSort(sortBy))
         .skip(skip)
         .limit(limit),
-      Job.countDocuments(filter)
+      Job.countDocuments(filter),
     ]);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      count: jobs.length,
+      count:   jobs.length,
       total,
       page,
-      pages: Math.ceil(total / limit),
-      jobs: jobs.map(job => sanitizeJob(job, req.user || null))
+      pages:   Math.ceil(total / limit),
+      jobs:    jobs.map(job => sanitizeJob(job, req.user ?? null)),
     });
   } catch (error) {
-    console.error("❌ Failed to fetch jobs:", error);
+    console.error("❌ getAllJobs:", error);
     if (error.name === "MongoServerError" && error.code === 2) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid geospatial query. Ensure location.coordinates has a 2dsphere index."
-      });
+      return res.status(400).json({ success: false, message: "Invalid geospatial query" });
     }
-    if (error.name === "CastError") {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid ID or parameter format"
-      });
-    }
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to fetch jobs",
-      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error",
     });
   }
 };
 
 /**
  * GET /jobs/my
- * Get jobs created by logged-in user (client)
+ * Client's own jobs — any status, not soft-deleted.
  */
 exports.getMyJobs = async (req, res) => {
-  if (!req.user || !req.user.id) {
-    return res.status(401).json({ success: false, message: "Authentication required" });
-  }
-
   try {
     const { status } = req.query;
     const { page, limit, skip } = parsePagination(req.query);
-    const filter = { client: req.user.id, isActive: true };
 
-    if (status) filter.status = status;
+    const filter = { ...notDeleted, client: req.user.id };
+
+    const statusFilter = parseStatusFilter(status);
+    if (statusFilter) filter.status = statusFilter;
 
     const [jobs, total] = await Promise.all([
       Job.find(filter)
-        .populate("assignedWorker", "fullName avatar ratings availabilityStatus")
+        .populate("assignedWorker",      "fullName avatar ratings providerDetails.availabilityStatus")
         .populate("applications.worker", "fullName avatar ratings providerDetails.headline")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
-      Job.countDocuments(filter)
+      Job.countDocuments(filter),
     ]);
 
-    res.status(200).json({
+    console.log(`[getMyJobs] user=${req.user.id} filter=${JSON.stringify(filter)} found=${jobs.length}`);
+
+    return res.status(200).json({
       success: true,
-      count: jobs.length,
+      count:   jobs.length,
       total,
       page,
-      pages: Math.ceil(total / limit),
-      jobs: jobs.map(job => sanitizeJob(job, req.user))
+      pages:   Math.ceil(total / limit),
+      jobs:    jobs.map(job => sanitizeJob(job, req.user)),
     });
   } catch (error) {
-    console.error("❌ Failed to fetch your jobs:", error);
-    res.status(500).json({
+    console.error("❌ getMyJobs:", error);
+    return res.status(500).json({
       success: false,
       message: "Failed to fetch your jobs",
-      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error",
     });
   }
 };
 
 /**
  * GET /jobs/offers
- * Get job offers for logged-in provider (direct hires + accepted applications awaiting response)
- * Access: Providers only
+ * Pending job offers for the logged-in provider.
  */
 exports.getJobOffers = async (req, res) => {
-  if (!req.user || !req.user.id) {
-    return res.status(401).json({ success: false, message: "Authentication required" });
-  }
-
-  // Optional: Role check for extra security
-  if (req.user.role !== "provider") {
-    return res.status(403).json({ success: false, message: "Providers only" });
-  }
-
   try {
-    const providerId = req.user.id;
-
-    // Only jobs where THIS provider is assigned & waiting to respond
     const jobs = await Job.find({
-      assignedWorker: providerId,
-      status: { $in: ["pending_provider_acceptance", "assigned"] },
-      isActive: true
+      ...notDeleted,
+      assignedWorker: req.user.id,
+      status:         "pending_provider_acceptance",
     })
-      .populate("client", "fullName avatar email isVerified")
+      .populate("client", "fullName avatar email kycVerified")
       .sort({ createdAt: -1 });
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      count: jobs.length,
-      jobs: jobs.map(job => sanitizeJob(job, req.user))
+      count:   jobs.length,
+      jobs:    jobs.map(job => sanitizeJob(job, req.user)),
     });
   } catch (error) {
-    console.error("❌ Failed to fetch job offers:", error);
-    res.status(500).json({
+    console.error("❌ getJobOffers:", error);
+    return res.status(500).json({
       success: false,
       message: "Failed to fetch job offers",
-      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error",
     });
   }
 };
 
 /**
  * GET /jobs/my-applications
- * Get jobs provider has applied to (with application status)
- * Access: Providers only
+ * Jobs this provider has applied to, with derived application status.
  */
 exports.getMyApplications = async (req, res) => {
-  if (!req.user || !req.user.id) {
-    return res.status(401).json({ success: false, message: "Authentication required" });
-  }
-
-  // Optional: Role check for extra security
-  if (req.user.role !== "provider") {
-    return res.status(403).json({ success: false, message: "Providers only" });
-  }
-
   try {
     const providerId = req.user.id;
-    const { page = 1, limit = 20 } = req.query;
-    const pageNum = Math.max(1, parseInt(page));
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
-    const skip = (pageNum - 1) * limitNum;
+    const { status } = req.query;
+    const { page, limit, skip } = parsePagination(req.query);
 
-    // Find jobs where provider has applied
-    const jobs = await Job.find({
-      "applications.worker": providerId,
-      isActive: true
-    })
-      .populate("client", "fullName avatar")
-      .populate("assignedWorker", "fullName avatar")
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limitNum);
+    const filter = { ...notDeleted, "applications.worker": providerId };
 
-    // Add application status to each job
-    const jobsWithStatus = jobs.map(job => {
-      const application = job.applications?.find(
-        app => app.worker?.toString() === providerId
-      );
+    const statusFilter = parseStatusFilter(status);
+    if (statusFilter) filter.status = statusFilter;
 
-      // Determine application status based on job status
-      let applicationStatus = "pending";
-      if (job.status === "assigned" || job.status === "pending_provider_acceptance") {
-        if (job.assignedWorker?.toString() === providerId) {
-          applicationStatus = "accepted";
-        } else {
-          applicationStatus = "rejected";
-        }
-      } else if (job.status === "cancelled") {
-        applicationStatus = "cancelled";
-      } else if (job.status === "completed") {
-        applicationStatus = "completed";
-      } else if (job.status === "escrow_funded" || job.status === "in_progress") {
-        applicationStatus = "in_progress";
+    const [jobs, total] = await Promise.all([
+      Job.find(filter)
+        .populate("client",         "fullName avatar")
+        .populate("assignedWorker", "fullName avatar")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Job.countDocuments(filter),
+    ]);
+
+    const deriveApplicationStatus = (job) => {
+      switch (job.status) {
+        case "pending_provider_acceptance":
+          return job.assignedWorker?.toString() === providerId ? "selected_pending" : "pending";
+        case "escrow_funded":
+        case "in_progress":
+          return job.assignedWorker?.toString() === providerId ? "in_progress" : "rejected";
+        case "completed":  return "completed";
+        case "cancelled":  return "cancelled";
+        default:           return "pending";
       }
+    };
 
+    const jobsWithStatus = jobs.map(job => {
+      const application = job.applications.find(app => app.worker?.toString() === providerId);
       return {
         ...sanitizeJob(job, req.user),
         applicationStatus: {
-          appliedAt: application?.appliedAt,
+          status:        deriveApplicationStatus(job),
+          appliedAt:     application?.appliedAt,
           proposedPrice: application?.proposedPrice,
-          message: application?.message,
-          status: applicationStatus
-        }
+          message:       application?.message,
+        },
       };
     });
 
-    const total = await Job.countDocuments({
-      "applications.worker": providerId,
-      isActive: true
-    });
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      count: jobsWithStatus.length,
+      count:   jobsWithStatus.length,
       total,
-      page: pageNum,
-      pages: Math.ceil(total / limitNum),
-      jobs: jobsWithStatus
+      page,
+      pages:   Math.ceil(total / limit),
+      jobs:    jobsWithStatus,
     });
   } catch (error) {
-    console.error("❌ Failed to fetch applications:", error);
-    res.status(500).json({
+    console.error("❌ getMyApplications:", error);
+    return res.status(500).json({
       success: false,
       message: "Failed to fetch applications",
-      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error",
+    });
+  }
+};
+
+/**
+ * GET /jobs/assigned
+ * Jobs where the logged-in provider is the assignedWorker.
+ * Covers both direct-hire (Flow A) and accepted applications (Flow B).
+ * Optional ?status= filter; defaults to all active statuses.
+ */
+exports.getMyAssignedJobs = async (req, res) => {
+  try {
+    const { status } = req.query;
+    const { page, limit, skip } = parsePagination(req.query);
+
+    const filter = { ...notDeleted, assignedWorker: req.user.id };
+
+    const statusFilter = parseStatusFilter(status);
+    if (statusFilter) {
+      filter.status = statusFilter;
+    } else {
+      // Default: everything that isn't terminal
+      filter.status = { $nin: ["cancelled", "completed"] };
+    }
+
+    const [jobs, total] = await Promise.all([
+      Job.find(filter)
+        .populate("client",         "fullName avatar email kycVerified")
+        .populate("assignedWorker", "fullName avatar ratings providerDetails.availabilityStatus")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Job.countDocuments(filter),
+    ]);
+
+    console.log(`[getMyAssignedJobs] user=${req.user.id} filter=${JSON.stringify(filter)} found=${jobs.length}`);
+
+    return res.status(200).json({
+      success: true,
+      count:   jobs.length,
+      total,
+      page,
+      pages:   Math.ceil(total / limit),
+      jobs:    jobs.map(job => sanitizeJob(job, req.user)),
+    });
+  } catch (error) {
+    console.error("❌ getMyAssignedJobs:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch assigned jobs",
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error",
     });
   }
 };
 
 /**
  * GET /jobs/provider
- * Get jobs relevant to logged-in provider (within service areas + matching skills)
+ * Open jobs matching the provider's skills and service areas.
  */
 exports.getProviderJobs = async (req, res) => {
-  if (!req.user || !req.user.id) {
-    return res.status(401).json({ success: false, message: "Authentication required" });
-  }
-
   try {
     const provider = await User.findById(req.user.id);
     if (!provider || provider.role !== "provider") {
@@ -613,152 +560,119 @@ exports.getProviderJobs = async (req, res) => {
 
     const { page, limit, skip } = parsePagination(req.query);
 
-    // Build base match stage - ONLY open jobs without assigned worker
-    const matchStage = {
-      $match: {
-        isActive: true,
-        status: "open",
-        assignedWorker: null
-      }
-    };
+    const matchFilter = { ...notDeleted, status: "open", assignedWorker: null };
 
-    // Category filter based on provider skills
-    const providerSkills = provider.providerDetails?.skills?.map(s => s.name)?.filter(Boolean) || [];
-    if (providerSkills.length > 0) {
-      matchStage.$match.category = { $in: providerSkills };
-    }
+    const skills = provider.providerDetails?.skills?.map(s => s.name).filter(Boolean) ?? [];
+    if (skills.length) matchFilter.category = { $in: skills };
 
-    // Location filter if provider has service areas
-    const serviceAreas = provider.providerDetails?.serviceAreas?.filter(sa =>
-      sa.coordinates && Array.isArray(sa.coordinates) && sa.coordinates.length === 2 && sa.radiusKm > 0
-    ) || [];
-
-    if (serviceAreas.length > 0) {
-      matchStage.$match.$or = serviceAreas.map(sa => ({
+    const areas = (provider.providerDetails?.serviceAreas ?? []).filter(
+      sa => Array.isArray(sa.coordinates) && sa.coordinates.length === 2 && sa.radiusKm > 0
+    );
+    if (areas.length) {
+      matchFilter.$or = areas.map(sa => ({
         "location.coordinates": {
-          $geoWithin: {
-            $centerSphere: [
-              sa.coordinates,
-              sa.radiusKm / 6371
-            ]
-          }
-        }
+          $geoWithin: { $centerSphere: [sa.coordinates, sa.radiusKm / 6371] },
+        },
       }));
     }
 
     const aggregation = [
-      matchStage,
+      { $match: matchFilter },
       { $sort: { createdAt: -1 } },
       { $skip: skip },
       { $limit: limit },
       {
         $lookup: {
-          from: "users",
-          localField: "client",
-          foreignField: "_id",
-          as: "clientInfo"
-        }
+          from: "users", localField: "client", foreignField: "_id", as: "clientInfo",
+        },
       },
       { $unwind: { path: "$clientInfo", preserveNullAndEmptyArrays: true } },
       {
         $project: {
           _id: 1, title: 1, description: 1, category: 1,
           location: 1, budget: 1, urgency: 1,
-          estimatedDuration: 1, preferredDate: 1,
-          client: "$clientInfo._id",
-          clientName: "$clientInfo.fullName",
-          clientAvatar: "$clientInfo.avatar",
+          estimatedDuration: 1, preferredDate: 1, createdAt: 1,
+          client:           "$clientInfo._id",
+          clientName:       "$clientInfo.fullName",
+          clientAvatar:     "$clientInfo.avatar",
           applicationCount: { $size: "$applications" },
-          createdAt: 1
-        }
-      }
+        },
+      },
     ];
 
-    const jobs = await Job.aggregate(aggregation);
-    const total = await Job.countDocuments(matchStage.$match);
+    const [jobs, total] = await Promise.all([
+      Job.aggregate(aggregation),
+      Job.countDocuments(matchFilter),
+    ]);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      count: jobs.length,
+      count:   jobs.length,
       total,
       page,
-      pages: Math.ceil(total / limit),
-      jobs
+      pages:   Math.ceil(total / limit),
+      jobs,
     });
   } catch (error) {
-    console.error("❌ Failed to fetch provider jobs:", error);
+    console.error("❌ getProviderJobs:", error);
     if (error.name === "MongoServerError" && error.code === 2) {
-      return res.status(400).json({
-        success: false,
-        message: "Geospatial query error. Ensure location.coordinates has a 2dsphere index."
-      });
+      return res.status(400).json({ success: false, message: "Geospatial query error" });
     }
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to fetch relevant jobs",
-      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error",
     });
   }
 };
 
 /**
  * GET /jobs/:id
- * Get single job details with proper authorization
+ * Single job with role-appropriate data.
  */
 exports.getJobById = async (req, res) => {
-  if (!req.user || !req.user.id) {
-    return res.status(401).json({ success: false, message: "Authentication required" });
-  }
-
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ success: false, message: "Invalid job ID format" });
     }
 
     const job = await Job.findById(req.params.id)
-      .populate("client", "fullName avatar email isVerified")
-      .populate("assignedWorker", "fullName avatar ratings providerDetails.headline availabilityStatus")
+      .populate("client",              "fullName avatar email kycVerified")
+      .populate("assignedWorker",      "fullName avatar ratings providerDetails.headline providerDetails.availabilityStatus")
       .populate("applications.worker", "fullName avatar ratings providerDetails.skills");
 
     if (!job) {
       return res.status(404).json({ success: false, message: "Job not found" });
     }
 
-    // Hide inactive jobs from non-owners/non-admins
-    if (!job.isActive && !isJobOwner(job, req.user.id) && req.user.role !== "admin") {
+    // Soft-deleted jobs visible only to owner / admin
+    if (job.isDeleted && !isJobOwner(job, req.user?.id) && req.user?.role !== "admin") {
       return res.status(404).json({ success: false, message: "Job not found" });
     }
 
-    res.status(200).json({
-      success: true,
-      job: sanitizeJob(job, req.user)
-    });
+    // Fire-and-forget view counter
+    Job.findByIdAndUpdate(req.params.id, { $inc: { views: 1 } }).catch(() => {});
+
+    return res.status(200).json({ success: true, job: sanitizeJob(job, req.user) });
   } catch (error) {
-    console.error("❌ Failed to fetch job:", error);
-    if (error.name === "CastError") {
-      return res.status(400).json({ success: false, message: "Invalid job ID format" });
-    }
-    res.status(500).json({
+    console.error("❌ getJobById:", error);
+    return res.status(500).json({
       success: false,
       message: "Failed to fetch job",
-      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error",
     });
   }
 };
 
 // ============================================================================
-// ✍️ APPLICATIONS & HIRING FLOWS
+// ✍️  APPLICATIONS & HIRING FLOWS
 // ============================================================================
 
 /**
  * POST /jobs/:id/apply
- * Flow B: Provider applies to an open job
+ * Flow B: Provider applies to an open job.
  */
 exports.applyToJob = async (req, res) => {
-  if (!req.user || !req.user.id) {
-    return res.status(401).json({ success: false, message: "Authentication required" });
-  }
-
   try {
     const { id: jobId } = req.params;
     const { message, proposedPrice } = req.body;
@@ -768,92 +682,58 @@ exports.applyToJob = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid job ID format" });
     }
 
-    const job = await Job.findById(jobId);
-    if (!job) {
-      return res.status(404).json({ success: false, message: "Job not found" });
-    }
+    const job = await Job.findOne({ _id: jobId, ...notDeleted });
+    if (!job) return res.status(404).json({ success: false, message: "Job not found" });
 
-    // Authorization & state checks
     if (job.status !== "open") {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot apply to job with status: ${job.status}`
-      });
+      return res.status(400).json({ success: false, message: `Cannot apply to job with status: ${job.status}` });
     }
-
-    if (job.assignedWorker) {
-      return res.status(400).json({
-        success: false,
-        message: "This job already has an assigned worker"
-      });
-    }
-
     if (job.client.toString() === providerId) {
-      return res.status(400).json({
-        success: false,
-        message: "Clients cannot apply to their own jobs"
-      });
+      return res.status(400).json({ success: false, message: "Clients cannot apply to their own jobs" });
     }
-
     if (job.applications.some(app => app.worker.toString() === providerId)) {
-      return res.status(400).json({
-        success: false,
-        message: "You have already applied to this job"
-      });
+      return res.status(400).json({ success: false, message: "You have already applied to this job" });
     }
 
-    // Validate proposedPrice if provided
     let price = null;
     if (proposedPrice !== undefined && proposedPrice !== "") {
       price = parseFloat(proposedPrice);
       if (isNaN(price) || price < 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Proposed price must be a valid non-negative number"
-        });
+        return res.status(400).json({ success: false, message: "Proposed price must be a valid non-negative number" });
       }
     }
 
-    // Add application
     job.applications.push({
-      worker: providerId,
+      worker:        providerId,
       proposedPrice: price,
-      message: message?.trim(),
-      appliedAt: new Date()
+      message:       message?.trim(),
+      appliedAt:     new Date(),
     });
-
     await job.save();
 
-    // Notify client
     console.log(`🔔 Notify client ${job.client} about new application from ${providerId}`);
 
-    res.status(200).json({
-      success: true,
-      message: "Application submitted successfully",
-      applicationCount: job.applications.length
+    return res.status(200).json({
+      success:          true,
+      message:          "Application submitted successfully",
+      applicationCount: job.applications.length,
     });
   } catch (error) {
-    console.error("💥 Apply to job failed:", error);
-    res.status(500).json({
+    console.error("💥 applyToJob:", error);
+    return res.status(500).json({
       success: false,
       message: "Failed to submit application",
-      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error",
     });
   }
 };
 
 /**
  * PATCH /jobs/:id/accept-application/:applicationId
- * Flow B: Client accepts a provider's application → moves to pending approval
+ * Flow B: Client selects a provider → status = pending_provider_acceptance.
+ * isLive stays false until the provider accepts and escrow is funded.
  */
 exports.acceptApplication = async (req, res) => {
-  if (!req.user || !req.user.id) {
-    return res.status(401).json({ success: false, message: "Authentication required" });
-  }
-
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
   try {
     const { id: jobId, applicationId } = req.params;
     const clientId = req.user.id;
@@ -862,176 +742,187 @@ exports.acceptApplication = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid ID format" });
     }
 
-    const job = await Job.findById(jobId).session(session);
-    if (!job) {
-      return res.status(404).json({ success: false, message: "Job not found" });
-    }
+    const job = await Job.findOne({ _id: jobId, ...notDeleted });
+    if (!job) return res.status(404).json({ success: false, message: "Job not found" });
 
     if (!isJobOwner(job, clientId)) {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
-
     if (job.status !== "open") {
       return res.status(400).json({
         success: false,
-        message: `Cannot accept application for job with status: ${job.status}`
+        message: `Cannot accept application for job with status: ${job.status}`,
       });
     }
 
     const application = job.applications.id(applicationId);
-    if (!application) {
-      return res.status(404).json({ success: false, message: "Application not found" });
-    }
+    if (!application) return res.status(404).json({ success: false, message: "Application not found" });
 
-    // Update job: assign worker, change to pending approval
     job.assignedWorker = application.worker;
-    job.status = "pending_provider_acceptance"; //  Now awaits provider approval
+    job.status         = "pending_provider_acceptance";
+    // isLive stays false — provider hasn't confirmed yet
+    await job.save();
 
-    await job.save({ session });
-    await session.commitTransaction();
+    console.log(`🔔 Notify provider ${application.worker} that client selected them for job ${jobId}`);
 
-    // Notify provider
-    console.log(`🔔 Notify provider ${application.worker} that client accepted their application for job ${jobId}`);
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Provider selected. Awaiting their acceptance.",
-      job: {
-        _id: job._id,
-        status: job.status,
-        assignedWorker: job.assignedWorker
-      }
+      job:     { _id: job._id, status: job.status, assignedWorker: job.assignedWorker },
     });
   } catch (error) {
-    await session.abortTransaction();
-    console.error("💥 Accept application failed:", error);
-    res.status(500).json({
+    console.error("💥 acceptApplication:", error);
+    return res.status(500).json({
       success: false,
       message: "Failed to accept application",
-      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error",
     });
-  } finally {
-    session.endSession();
   }
 };
 
 /**
  * PATCH /jobs/:id/respond
- * Provider accepts/declines job offer (Flow A or B)
+ * Provider accepts or declines a job offer (both flows).
+ *
+ * On ACCEPT:
+ *   - status → in_progress  (work begins immediately)
+ *   - isLive → true
+ *   - provider marked busy + added to user.activeJobs
+ *   - job chat room created
+ *
+ * On DECLINE:
+ *   - reopen job for other applicants, or cancel if none remain
+ *   - provider availability restored
  */
 exports.respondToJobOffer = async (req, res) => {
-  if (!req.user || !req.user.id) {
-    return res.status(401).json({ success: false, message: "Authentication required" });
-  }
-
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     const { id: jobId } = req.params;
-    const { action } = req.body;
-    const providerId = req.user.id;
+    const { action }    = req.body;
+    const providerId    = req.user.id;
 
     if (!["accept", "decline"].includes(action)) {
-      return res.status(400).json({
-        success: false,
-        message: "Action must be 'accept' or 'decline'"
-      });
+      return res.status(400).json({ success: false, message: "Action must be 'accept' or 'decline'" });
     }
-
     if (!mongoose.Types.ObjectId.isValid(jobId)) {
       return res.status(400).json({ success: false, message: "Invalid job ID format" });
     }
 
-    const job = await Job.findById(jobId).session(session);
-    if (!job) {
-      return res.status(404).json({ success: false, message: "Job not found" });
-    }
+    const job = await Job.findOne({ _id: jobId, ...notDeleted })
+      .populate("client",         "fullName email")
+      .populate("assignedWorker", "fullName email")
+      .session(session);
+
+    if (!job) return res.status(404).json({ success: false, message: "Job not found" });
 
     if (!isAssignedWorker(job, providerId)) {
-      return res.status(403).json({
-        success: false,
-        message: "Only the assigned provider can respond to this offer"
-      });
+      return res.status(403).json({ success: false, message: "Only the assigned provider can respond" });
     }
-
-    if (job.status !== "pending_provider_acceptance" && job.status !== "assigned") {
+    if (job.status !== "pending_provider_acceptance") {
       return res.status(400).json({
         success: false,
-        message: `Cannot respond to job with status: ${job.status}`
+        message: `Cannot respond to job with status: ${job.status}`,
       });
     }
 
     if (action === "accept") {
-      // PROVIDER ACCEPTS → Move to escrow funded, set provider to BUSY
-      job.status = "escrow_funded";
-      job.escrow.funded = true; // Auto-fund for MVP
-      job.escrow.fundedAt = new Date();
+      // Provider confirmed → work starts immediately
+      job.status = "in_progress";
+      job.isLive = true; // ← job is NOW live
 
-      // Update provider availability: NOW BUSY
+      // Mark provider busy and track in activeJobs
       await User.findByIdAndUpdate(
         providerId,
-        { availabilityStatus: "busy" },
+        {
+          $set:      { "providerDetails.availabilityStatus": "busy" },
+          $addToSet: { activeJobs: job._id },
+        },
         { session }
+      );
+
+      // Open job chat room
+      const { ChatConversation } = require("../models/chat.model");
+      await ChatConversation.findOneAndUpdate(
+        { jobId: job._id, type: "job" },
+        {
+          $setOnInsert: {
+            jobId:        job._id,
+            type:         "job",
+            title:        `Job – ${job.title}`,
+            participants: [job.client._id, new mongoose.Types.ObjectId(providerId)],
+            unreadCounts: {},
+          },
+        },
+        { upsert: true, new: true, session }
       );
 
       await job.save({ session });
       await session.commitTransaction();
 
-      console.log(` Provider ${providerId} ACCEPTED job ${jobId} → status: busy, job: escrow_funded`);
-      console.log(`🔔 Notify client ${job.client} that provider accepted job ${jobId}`);
+      // WebSocket notification (non-critical)
+      try {
+        const { getIO } = require("../socket/server");
+        const io        = getIO();
+        const payload   = {
+          jobId:      job._id,
+          status:     "in_progress",
+          isLive:     true,
+          message:    "Provider accepted! Work has started. Chat is now available.",
+          chatRoomId: `job:${job._id}`,
+          timestamp:  new Date(),
+        };
+        io.to(`user:${job.client._id}`).emit("job:status_updated", { ...payload, action: "provider_accepted" });
+        io.to(`user:${providerId}`).emit("job:status_updated",      { ...payload, action: "work_started_confirmed" });
+      } catch (socketErr) {
+        console.warn("⚠️ WebSocket notification failed (non-critical):", socketErr.message);
+      }
 
-      res.status(200).json({
-        success: true,
-        message: "Job accepted! Work can now begin after escrow confirmation.",
-        job: {
-          _id: job._id,
-          status: job.status,
-          escrow: job.escrow
-        }
+      console.log(`✅ Provider ${providerId} accepted job ${jobId} → in_progress, isLive = true`);
+      console.log(`🔔 Notify client ${job.client._id}`);
+
+      return res.status(200).json({
+        success:    true,
+        message:    "Job accepted! Work has started. Chat is now available.",
+        job:        { _id: job._id, status: job.status, isLive: job.isLive },
+        chatRoomId: `job:${job._id}`,
       });
+
     } else {
-      // PROVIDER DECLINES → Reopen job or cancel, set provider to AVAILABLE
+      // DECLINE — reopen or cancel
       job.assignedWorker = null;
-      job.status = job.applications?.length > 0 ? "open" : "cancelled";
+      job.applications   = job.applications.filter(app => app.worker.toString() !== providerId);
+      job.status         = job.applications.length > 0 ? "open" : "cancelled";
+      // isLive was never true at this point
 
-      // Remove this provider from applications to prevent re-selection
-      job.applications = job.applications.filter(
-        app => app.worker.toString() !== providerId
-      );
-
-      // Update provider availability: BACK TO AVAILABLE
       await User.findByIdAndUpdate(
         providerId,
-        { availabilityStatus: "available" },
+        { $set: { "providerDetails.availabilityStatus": "available" } },
         { session }
       );
 
       await job.save({ session });
       await session.commitTransaction();
 
-      console.log(`❌ Provider ${providerId} DECLINED job ${jobId} → status: available, job: ${job.status}`);
-      console.log(`🔔 Notify client ${job.client} that provider declined job ${jobId}`);
+      console.log(`❌ Provider ${providerId} declined job ${jobId} → ${job.status}`);
+      console.log(`🔔 Notify client ${job.client._id}`);
 
-      res.status(200).json({
+      return res.status(200).json({
         success: true,
         message: job.status === "open"
-          ? "Provider declined. Job is open for other applications."
-          : "Provider declined. Job cancelled.",
-        job: {
-          _id: job._id,
-          status: job.status,
-          assignedWorker: null
-        }
+          ? "Declined. Job is open for other applicants."
+          : "Declined. Job cancelled (no remaining applicants).",
+        job:     { _id: job._id, status: job.status, assignedWorker: null },
       });
     }
   } catch (error) {
     await session.abortTransaction();
-    console.error("💥 Respond to job offer failed:", error);
-    res.status(500).json({
+    console.error("💥 respondToJobOffer:", error);
+    return res.status(500).json({
       success: false,
       message: "Failed to process response",
-      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error",
     });
   } finally {
     session.endSession();
@@ -1044,425 +935,212 @@ exports.respondToJobOffer = async (req, res) => {
 
 /**
  * PATCH /jobs/:id/fund-escrow
- * Client funds escrow (if not auto-funded on acceptance)
+ * Client pays admin while work is in progress.
+ * Job status advances to escrow_funded (work continues uninterrupted).
+ * isLive is already true — no change.
+ *
+ * Hook your real payment gateway (Stripe / eSewa / Khalti) here before
+ * setting escrow.funded = true.
  */
 exports.fundEscrow = async (req, res) => {
-  if (!req.user || !req.user.id) {
-    return res.status(401).json({ success: false, message: "Authentication required" });
-  }
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
   try {
     const { id: jobId } = req.params;
-    const clientId = req.user.id;
-
     if (!mongoose.Types.ObjectId.isValid(jobId)) {
       return res.status(400).json({ success: false, message: "Invalid job ID format" });
     }
 
-    const job = await Job.findById(jobId);
-    if (!job) {
-      return res.status(404).json({ success: false, message: "Job not found" });
-    }
+    const job = await Job.findOne({ _id: jobId, ...notDeleted }).session(session);
+    if (!job) return res.status(404).json({ success: false, message: "Job not found" });
 
-    if (!isJobOwner(job, clientId)) {
+    if (!isJobOwner(job, req.user.id)) {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
 
-    if (!["assigned", "pending_provider_acceptance", "escrow_funded"].includes(job.status)) {
+    // Can only fund during active work
+    if (job.status !== "in_progress") {
       return res.status(400).json({
         success: false,
-        message: `Escrow can only be funded when job status allows it`
+        message: `Escrow can only be funded while job is in progress (current status: ${job.status})`,
       });
     }
-
     if (job.escrow.funded) {
       return res.status(400).json({ success: false, message: "Escrow already funded" });
     }
 
-    // Integrate payment gateway here (Stripe, eSewa, Khalti, etc.)
-    // For MVP: simulate successful funding
-    job.escrow.funded = true;
+    // ↓ Insert real payment gateway call here ↓
+
+    job.escrow.funded   = true;
     job.escrow.fundedAt = new Date();
-    if (job.status !== "escrow_funded") {
-      job.status = "escrow_funded";
-    }
-
-    await job.save();
-
-    res.status(200).json({
-      success: true,
-      message: "Escrow funded successfully",
-      escrow: job.escrow
-    });
-  } catch (error) {
-    console.error("💥 Fund escrow failed:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fund escrow",
-      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
-    });
-  }
-};
-
-/**
- * PATCH /jobs/:id/start-work
- * Provider marks work as started (after escrow funded)
- * - Sets provider availability to "busy"
- * - Adds job to provider's activeJobs
- * - Creates job-specific chat conversation
- * - Notifies both parties via WebSocket
- */
-exports.startWork = async (req, res) => {
-  if (!req.user || !req.user.id) {
-    return res.status(401).json({ success: false, message: "Authentication required" });
-  }
-
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
-  try {
-    const { id: jobId } = req.params;
-    const providerId = req.user.id;
-
-    // Validate job ID format
-    if (!mongoose.Types.ObjectId.isValid(jobId)) {
-      return res.status(400).json({ success: false, message: "Invalid job ID format" });
-    }
-
-    // Fetch job with populated references
-    const job = await Job.findById(jobId)
-      .populate("client", "fullName email")
-      .populate("assignedWorker", "fullName email")
-      .session(session);
-
-    if (!job) {
-      return res.status(404).json({ success: false, message: "Job not found" });
-    }
-
-    // Authorization: Only assigned provider can start work
-    if (!isAssignedWorker(job, providerId)) {
-      return res.status(403).json({
-        success: false,
-        message: "Only assigned provider can start work"
-      });
-    }
-
-    // Business logic: Escrow must be funded
-    if (!job.escrow.funded) {
-      return res.status(400).json({
-        success: false,
-        message: "Cannot start work: Escrow not funded"
-      });
-    }
-
-    // Business logic: Job must be in escrow_funded state
-    if (job.status !== "escrow_funded") {
-      return res.status(400).json({
-        success: false,
-        message: `Work can only start when job status is 'escrow_funded'`
-      });
-    }
-
-    // 🔄 Update job status
-    job.status = "in_progress";
-
-    // 🔄 Update provider: Set to busy + add to activeJobs
-    await User.findByIdAndUpdate(
-      providerId,
-      {
-        $set: { "providerDetails.availabilityStatus": "busy" },
-        $addToSet: { activeJobs: job._id } // Requires activeJobs field in User schema
-      },
-      { session, runValidators: true }
-    );
-
-    // 💬 Create job-specific chat conversation (if not exists)
-    const { ChatConversation } = require("../models/chat.model");
-
-    await ChatConversation.findOneAndUpdate(
-      { jobId: job._id },
-      {
-        jobId: job._id,
-        type: "job",
-        title: `Job #${job._id.toString().slice(-6)} - ${job.title}`,
-        participants: [job.client._id, providerId],
-        lastMessage: {
-          text: "Work has started! You can now chat about this job.",
-          sender: null,
-          timestamp: new Date()
-        }
-      },
-      { upsert: true, new: true, session }
-    );
+    job.status          = "escrow_funded"; // still mid-work; provider continues
 
     await job.save({ session });
     await session.commitTransaction();
 
-    // 🔔 Real-time notifications via WebSocket
-    try {
-      const { getIO } = require("../socket/server");
-      const io = getIO();
+    console.log(`💰 Escrow funded for job ${jobId} — payment secured with admin`);
+    console.log(`🔔 Notify provider ${job.assignedWorker} that payment is secured`);
 
-      const notificationPayload = {
-        jobId: job._id,
-        status: "in_progress",
-        message: "Work has started! Chat is now available.",
-        chatRoomId: `job:${job._id}`,
-        timestamp: new Date()
-      };
-
-      // Notify client
-      io.to(`user:${job.client._id}`).emit("job:status_updated", {
-        ...notificationPayload,
-        from: "system",
-        action: "work_started"
-      });
-
-      // Notify provider (echo confirmation)
-      io.to(`user:${providerId}`).emit("job:status_updated", {
-        ...notificationPayload,
-        from: "system",
-        action: "work_started_confirmed"
-      });
-
-      // Auto-join both to the job chat room for immediate messaging
-      // (Frontend should listen and call socket.join(`job:${jobId}`) on receipt)
-
-      console.log(`🔔 Notified client ${job.client._id} and provider ${providerId} via WebSocket`);
-    } catch (socketErr) {
-      // Non-critical: Don't fail the request if WebSocket notification fails
-      console.warn("⚠️ WebSocket notification failed (non-critical):", socketErr.message);
-    }
-
-    console.log(`✅ Work started on job ${jobId} by provider ${providerId}`);
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: "Work started successfully. Chat is now available.",
-      job: {
-        _id: job._id,
-        status: job.status,
-        chatAvailable: true
-      },
-      chatRoomId: `job:${job._id}`
+      message: "Payment received. Funds are held securely until the job is complete.",
+      escrow:  job.escrow,
+      status:  job.status,
     });
-
   } catch (error) {
     await session.abortTransaction();
-    console.error("💥 Start work failed:", error);
-
-    if (error.name === "ValidationError") {
-      const messages = Object.values(error.errors).map(e => e.message);
-      return res.status(400).json({
-        success: false,
-        message: "Validation failed",
-        details: messages
-      });
-    }
-
-    res.status(500).json({
+    console.error("💥 fundEscrow:", error);
+    return res.status(500).json({
       success: false,
-      message: "Failed to start work",
-      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
+      message: "Failed to fund escrow",
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error",
     });
   } finally {
     session.endSession();
   }
 };
 
+// NOTE: startWork endpoint removed.
+// Work begins the moment the provider accepts the offer (respondToJobOffer → accept).
+// The chat room and busy-state are set there. No separate "start work" step exists.
+
 /**
  * PATCH /jobs/:id/complete
- * Either party can request completion (with optional review from client)
- * - Sets provider availability back to "available"
- * - Removes job from provider's activeJobs
- * - Notifies via WebSocket that chat is archiving
- * - Handles optional client review and rating aggregation
+ * Either party marks job complete. Admin confirms and pays provider.
+ *
+ * Allowed from: in_progress OR escrow_funded
+ *  - status → completed, isLive → false
+ *  - escrow.releasedAt recorded (admin pays provider out-of-band)
+ *  - provider freed from activeJobs, availability restored
+ *  - optional review from client
+ *  - WebSocket notification + chat archived
  */
 exports.completeJob = async (req, res) => {
-  if (!req.user || !req.user.id) {
-    return res.status(401).json({ success: false, message: "Authentication required" });
-  }
-
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    const { id: jobId } = req.params;
+    const { id: jobId }       = req.params;
     const { rating, comment } = req.body;
-    const userId = req.user.id;
+    const userId              = req.user.id;
 
-    // Validate job ID format
     if (!mongoose.Types.ObjectId.isValid(jobId)) {
       return res.status(400).json({ success: false, message: "Invalid job ID format" });
     }
 
-    // Fetch job with populated references
-    const job = await Job.findById(jobId)
-      .populate("client", "fullName email")
+    const job = await Job.findOne({ _id: jobId, ...notDeleted })
+      .populate("client",         "fullName email")
       .populate("assignedWorker", "fullName email providerDetails")
       .session(session);
 
-    if (!job) {
-      return res.status(404).json({ success: false, message: "Job not found" });
-    }
+    if (!job) return res.status(404).json({ success: false, message: "Job not found" });
 
-    const isClient = isJobOwner(job, userId);
+    const isClient   = isJobOwner(job, userId);
     const isProvider = isAssignedWorker(job, userId);
 
-    // Authorization: Must be client OR assigned provider
     if (!isClient && !isProvider) {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
 
-    // Business logic: Only jobs in_progress can be completed
-    if (job.status !== "in_progress") {
+    // Allow completion from in_progress (payment pending) or escrow_funded (payment secured)
+    if (!["in_progress", "escrow_funded"].includes(job.status)) {
       return res.status(400).json({
         success: false,
-        message: `Only jobs with status 'in_progress' can be completed`
+        message: `Job cannot be completed from status: ${job.status}`,
       });
     }
 
-    // 🔄 Update job status and escrow
-    job.status = "completed";
-    job.escrow.releasedAt = new Date(); // Auto-release for MVP
+    job.status            = "completed";
+    job.isLive            = false;
+    job.escrow.releasedAt = new Date(); // signals admin to release payment to provider
 
-    // ⭐ Handle optional review (only if client is completing)
-    if (isClient && rating !== undefined && rating !== null) {
+    // Optional review — client only
+    if (isClient && rating != null) {
       const ratingNum = parseFloat(rating);
-
       if (isNaN(ratingNum) || ratingNum < 1 || ratingNum > 5) {
-        return res.status(400).json({
-          success: false,
-          message: "Rating must be a number between 1 and 5"
-        });
+        await session.abortTransaction();
+        return res.status(400).json({ success: false, message: "Rating must be between 1 and 5" });
       }
 
-      job.review = {
-        rating: ratingNum,
-        comment: comment?.trim() || "",
-        date: new Date()
-      };
+      job.review = { rating: ratingNum, comment: comment?.trim() ?? "", date: new Date() };
 
-      // 🔄 Update provider's aggregate rating (atomic calculation)
-      if (job.assignedWorker) {
-        const provider = await User.findById(job.assignedWorker).session(session);
-
-        if (provider) {
-          const currentAvg = provider.ratings?.average || 0;
-          const currentCount = provider.ratings?.count || 0;
-
-          // Calculate new average: (old_sum + new_rating) / new_count
-          const newSum = (currentAvg * currentCount) + ratingNum;
-          const newCount = currentCount + 1;
-          const newAverage = parseFloat((newSum / newCount).toFixed(2));
-
-          provider.ratings = {
-            average: newAverage,
-            count: newCount
-          };
-
-          await provider.save({ session });
-          console.log(`⭐ Updated provider ${job.assignedWorker} rating: ${newAverage} (${newCount} reviews)`);
+      // Atomic running-average on provider
+      if (job.assignedWorker?._id) {
+        const worker = await User.findById(job.assignedWorker._id).session(session);
+        if (worker) {
+          const count  = (worker.ratings?.count   ?? 0) + 1;
+          const newAvg = parseFloat((((worker.ratings?.average ?? 0) * (count - 1) + ratingNum) / count).toFixed(2));
+          worker.ratings = { average: newAvg, count };
+          await worker.save({ session });
         }
       }
     }
 
-    // 🔄 CRITICAL: Update provider availability → BACK TO AVAILABLE
-    // Also remove job from activeJobs array
     if (job.assignedWorker) {
       await User.findByIdAndUpdate(
-        job.assignedWorker,
+        job.assignedWorker._id ?? job.assignedWorker,
         {
-          $set: { "providerDetails.availabilityStatus": "available" },
-          $pull: { activeJobs: job._id }
+          $set:  { "providerDetails.availabilityStatus": "available" },
+          $pull: { activeJobs: job._id },
         },
-        { session, runValidators: true }
+        { session }
       );
-      console.log(`🔄 Provider ${job.assignedWorker} availability set to "available" after job completion`);
     }
 
     await job.save({ session });
     await session.commitTransaction();
 
-    // 🔔 Real-time notifications via WebSocket
+    // WebSocket (non-critical)
     try {
       const { getIO } = require("../socket/server");
-      const io = getIO();
-
-      const notificationPayload = {
-        jobId: job._id,
-        status: "completed",
-        message: isClient
-          ? "Job marked complete by client. Thank you!"
-          : "Job marked complete. Awaiting client confirmation.",
-        chatArchived: true,
-        reviewSubmitted: isClient && job.review ? true : false,
-        timestamp: new Date()
+      const io        = getIO();
+      const payload   = {
+        jobId:           job._id,
+        status:          "completed",
+        isLive:          false,
+        chatArchived:    true,
+        reviewSubmitted: !!(isClient && job.review),
+        timestamp:       new Date(),
       };
-
-      // Notify both parties
-      const recipients = [job.client._id, job.assignedWorker?._id].filter(Boolean);
-
-      recipients.forEach(recipientId => {
-        io.to(`user:${recipientId}`).emit("job:status_updated", {
-          ...notificationPayload,
-          from: isClient ? "client" : "provider",
-          action: "job_completed"
+      [job.client._id, job.assignedWorker?._id].filter(Boolean).forEach(uid => {
+        io.to(`user:${uid}`).emit("job:status_updated", {
+          ...payload,
+          from:    isClient ? "client" : "provider",
+          action:  "job_completed",
+          message: isClient ? "Job marked complete by client." : "Job marked complete by provider.",
         });
       });
-
-      // Notify chat room that conversation is archiving (read-only mode)
       io.to(`job:${job._id}`).emit("job:chat_archived", {
-        message: "Job completed. This chat is now archived for reference.",
-        canSend: false,
-        timestamp: new Date()
+        message:   "Job completed. This chat is now archived.",
+        canSend:   false,
+        timestamp: new Date(),
       });
-
-      console.log(`🔔 Notified ${recipients.length} participants via WebSocket about job completion`);
     } catch (socketErr) {
-      // Non-critical: Don't fail the request if WebSocket notification fails
       console.warn("⚠️ WebSocket notification failed (non-critical):", socketErr.message);
     }
 
-    console.log(`✅ Job ${jobId} completed successfully`);
+    console.log(`✅ Job ${jobId} completed → isLive = false | escrow.releasedAt set for admin payout`);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: "Job completed successfully",
+      message: "Job completed successfully. Admin will release payment to the provider.",
       job: {
-        _id: job._id,
-        status: job.status,
-        review: job.review,
-        escrow: job.escrow,
-        chatArchived: true
+        _id:          job._id,
+        status:       job.status,
+        isLive:       job.isLive,
+        review:       job.review,
+        escrow:       job.escrow,
+        chatArchived: true,
       },
-      providerAvailabilityUpdated: true
     });
-
   } catch (error) {
     await session.abortTransaction();
-    console.error("💥 Complete job failed:", error);
-
-    if (error.name === "ValidationError") {
-      const messages = Object.values(error.errors).map(e => e.message);
-      return res.status(400).json({
-        success: false,
-        message: "Validation failed",
-        details: messages
-      });
-    }
-
-    if (error.name === "MongoServerError" && error.code === 11000) {
-      return res.status(400).json({
-        success: false,
-        message: "Duplicate entry error. Please try again."
-      });
-    }
-
-    res.status(500).json({
+    console.error("💥 completeJob:", error);
+    return res.status(500).json({
       success: false,
       message: "Failed to complete job",
-      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error",
     });
   } finally {
     session.endSession();
@@ -1470,90 +1148,73 @@ exports.completeJob = async (req, res) => {
 };
 
 // ============================================================================
-// ✏️ UPDATES, CANCELLATION & DELETION
+// ✏️  UPDATES, CANCELLATION & DELETION
 // ============================================================================
 
 /**
  * PATCH /jobs/:id
- * Allow client to update job when status is "pending_provider_acceptance"
+ * Update safe fields.
+ * Allowed in: open, pending_provider_acceptance, escrow_funded
+ * Blocked in: in_progress, completed, cancelled
  */
 exports.updateJob = async (req, res) => {
-  if (!req.user || !req.user.id) {
-    return res.status(401).json({ success: false, message: "Authentication required" });
-  }
-
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ success: false, message: "Invalid job ID format" });
     }
 
-    const job = await Job.findById(req.params.id);
-    if (!job) {
-      return res.status(404).json({ success: false, message: "Job not found" });
-    }
+    const job = await Job.findOne({ _id: req.params.id, ...notDeleted });
+    if (!job) return res.status(404).json({ success: false, message: "Job not found" });
 
     if (!isJobOwner(job, req.user.id) && req.user.role !== "admin") {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
 
-    // Allow updates when pending (awaiting provider approval)
-    if (["completed", "cancelled", "in_progress"].includes(job.status)) {
+    const BLOCKED_STATUSES = ["in_progress", "completed", "cancelled", "disputed", "resolved"];
+    if (BLOCKED_STATUSES.includes(job.status)) {
       return res.status(400).json({
         success: false,
-        message: `Cannot update job with status: ${job.status}`
+        message: `Cannot update job with status: ${job.status}`,
       });
     }
 
-    const allowedUpdates = [
-      "title", "description", "budget", "urgency",
-      "preferredDate", "category", "estimatedDuration"
-    ];
-
+    const allowed = ["title", "description", "budget", "urgency", "preferredDate", "category"];
     const updates = {};
-    allowedUpdates.forEach((field) => {
-      if (req.body[field] !== undefined) {
-        updates[field] = req.body[field];
-      }
-    });
+    allowed.forEach(f => { if (req.body[f] !== undefined) updates[f] = req.body[f]; });
 
-    // Handle location update (flat → nested)
+    // Location patch
     if (req.body.address !== undefined || req.body.city !== undefined) {
       updates.location = {
-        address: req.body.address?.trim() || job.location?.address,
-        city: req.body.city?.trim() || job.location?.city,
+        address:   req.body.address?.trim()   ?? job.location.address,
+        city:      req.body.city?.trim()      ?? job.location.city,
+        latitude:  job.location.latitude,
+        longitude: job.location.longitude,
+        coordinates: job.location.coordinates,
       };
       if (req.body.latitude !== undefined && req.body.longitude !== undefined) {
         const lat = parseFloat(req.body.latitude);
         const lng = parseFloat(req.body.longitude);
         if (!isNaN(lat) && !isNaN(lng)) {
-          updates.location.latitude = lat;
-          updates.location.longitude = lng;
+          updates.location.latitude    = lat;
+          updates.location.longitude   = lng;
+          updates.location.coordinates = [lng, lat];
         }
-      } else {
-        updates.location.latitude = job.location?.latitude;
-        updates.location.longitude = job.location?.longitude;
       }
     }
 
-    // Handle estimatedDuration nested object
+    // estimatedDuration patch
     if (req.body.estimatedDuration !== undefined || req.body.durationUnit !== undefined) {
-      const currentValue = job.estimatedDuration?.value;
-      const currentUnit = job.estimatedDuration?.unit || "hours";
-      const newValue = req.body.estimatedDuration !== undefined
+      const newVal = req.body.estimatedDuration !== undefined
         ? parseFloat(req.body.estimatedDuration)
-        : currentValue;
-      const newUnit = req.body.durationUnit || currentUnit;
+        : job.estimatedDuration?.value;
+      const newUnit = req.body.durationUnit ?? job.estimatedDuration?.unit ?? "hours";
 
-      if (req.body.estimatedDuration !== undefined && (isNaN(newValue) || newValue <= 0)) {
-        return res.status(400).json({
-          success: false,
-          message: "Estimated duration value must be a valid positive number"
-        });
+      if (req.body.estimatedDuration !== undefined && (isNaN(newVal) || newVal <= 0)) {
+        return res.status(400).json({ success: false, message: "Estimated duration must be a positive number" });
       }
-
       updates.estimatedDuration = {
-        value: newValue !== undefined ? newValue : currentValue,
-        unit: ["days", "hours"].includes(newUnit) ? newUnit : "hours"
+        value: newVal,
+        unit:  ["days", "hours"].includes(newUnit) ? newUnit : "hours",
       };
     }
 
@@ -1563,114 +1224,96 @@ exports.updateJob = async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Job updated successfully",
-      job: sanitizeJob(updatedJob, req.user)
+      job:     sanitizeJob(updatedJob, req.user),
     });
   } catch (error) {
-    console.error("❌ Update job error:", error);
+    console.error("❌ updateJob:", error);
     if (error.name === "ValidationError") {
-      const messages = Object.values(error.errors).map(e => e.message);
       return res.status(400).json({
         success: false,
         message: "Validation failed",
-        details: messages
+        details: Object.values(error.errors).map(e => e.message),
       });
     }
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to update job",
-      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error",
     });
   }
 };
 
 /**
  * PATCH /jobs/:id/cancel
- * Properly reset provider availability when job is cancelled
+ * Either party cancels. Resets provider state, clears isLive.
  */
 exports.cancelJob = async (req, res) => {
-  if (!req.user || !req.user.id) {
-    return res.status(401).json({ success: false, message: "Authentication required" });
-  }
-
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     const { id: jobId } = req.params;
-    const { reason } = req.body;
-    const userId = req.user.id;
+    const userId        = req.user.id;
 
     if (!mongoose.Types.ObjectId.isValid(jobId)) {
       return res.status(400).json({ success: false, message: "Invalid job ID format" });
     }
 
     const job = await Job.findById(jobId).session(session);
-    if (!job) {
-      return res.status(404).json({ success: false, message: "Job not found" });
-    }
+    if (!job) return res.status(404).json({ success: false, message: "Job not found" });
 
-    const isClient = isJobOwner(job, userId);
+    const isClient   = isJobOwner(job, userId);
     const isProvider = isAssignedWorker(job, userId);
 
     if (!isClient && !isProvider && req.user.role !== "admin") {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
-
     if (["completed", "cancelled"].includes(job.status)) {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot cancel job with status: ${job.status}`
-      });
+      return res.status(400).json({ success: false, message: `Cannot cancel job with status: ${job.status}` });
     }
 
-    // Update job status
     job.status = "cancelled";
-    job.isActive = false;
+    job.isLive = false;
 
-    // Handle escrow refund if funded
+    // Trigger admin refund if client had already paid
     if (job.escrow.funded) {
       job.escrow.refundedAt = new Date();
-      console.log(`💸 Process refund for job ${jobId} amount ${job.escrow.amount}`);
+      console.log(`💸 Queue refund to client for job ${jobId}: amount ${job.escrow.amount}`);
+      // Hook your refund logic / payment gateway here
     }
 
-    // CRITICAL: Update provider availability → BACK TO AVAILABLE on cancel
     if (job.assignedWorker) {
       await User.findByIdAndUpdate(
         job.assignedWorker,
-        { availabilityStatus: "available" },
+        {
+          $set:  { "providerDetails.availabilityStatus": "available" },
+          $pull: { activeJobs: job._id },
+        },
         { session }
       );
-      console.log(`🔄 Provider ${job.assignedWorker} availability set to "available" after job cancellation`);
     }
 
     await job.save({ session });
     await session.commitTransaction();
 
-    // Notify other party
     const notifyTo = isClient ? job.assignedWorker : job.client;
-    if (notifyTo) {
-      console.log(`🔔 Notify user ${notifyTo} that job ${jobId} was cancelled by ${userId}`);
-    }
+    if (notifyTo) console.log(`🔔 Notify ${notifyTo} that job ${jobId} was cancelled by ${userId}`);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Job cancelled successfully",
-      job: {
-        _id: job._id,
-        status: job.status,
-        escrow: job.escrow
-      }
+      job:     { _id: job._id, status: job.status, isLive: job.isLive, escrow: job.escrow },
     });
   } catch (error) {
     await session.abortTransaction();
-    console.error("💥 Cancel job failed:", error);
-    res.status(500).json({
+    console.error("💥 cancelJob:", error);
+    return res.status(500).json({
       success: false,
       message: "Failed to cancel job",
-      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error",
     });
   } finally {
     session.endSession();
@@ -1678,47 +1321,42 @@ exports.cancelJob = async (req, res) => {
 };
 
 /**
- * PATCH /jobs/:id/end (legacy - kept for backward compatibility)
+ * PATCH /jobs/:id/end — legacy alias
  */
 exports.endJob = exports.completeJob;
 
 /**
  * DELETE /jobs/:id
- * Soft delete a job (admin or owner only)
+ * Soft delete — owner or admin only, in-progress jobs cannot be deleted.
  */
 exports.deleteJob = async (req, res) => {
-  if (!req.user || !req.user.id) {
-    return res.status(401).json({ success: false, message: "Authentication required" });
-  }
-
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ success: false, message: "Invalid job ID format" });
     }
 
     const job = await Job.findById(req.params.id);
-    if (!job) {
-      return res.status(404).json({ success: false, message: "Job not found" });
-    }
+    if (!job) return res.status(404).json({ success: false, message: "Job not found" });
 
     if (!isJobOwner(job, req.user.id) && req.user.role !== "admin") {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
+    if (job.status === "in_progress") {
+      return res.status(400).json({ success: false, message: "Cannot delete a job that is in progress" });
+    }
 
+    job.isDeleted = true;
     job.deletedAt = new Date();
-    job.isActive = false;
+    job.isLive    = false;
     await job.save();
 
-    res.status(200).json({
-      success: true,
-      message: "Job deleted successfully"
-    });
+    return res.status(200).json({ success: true, message: "Job deleted successfully" });
   } catch (error) {
-    console.error("❌ Delete job error:", error);
-    res.status(500).json({
+    console.error("❌ deleteJob:", error);
+    return res.status(500).json({
       success: false,
       message: "Failed to delete job",
-      error: process.env.NODE_ENV === "development" ? error.message : "Server error"
+      error: process.env.NODE_ENV === "development" ? error.message : "Server error",
     });
   }
 };

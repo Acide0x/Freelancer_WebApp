@@ -1,109 +1,49 @@
 // routes/chat.routes.js
-const express = require("express");
-const router = express.Router();
-const { verifyAuth, restrictTo } = require("../middlewares/authMiddleware");
+const express      = require("express");
+const router       = express.Router();
+const { verifyAuth } = require("../middlewares/authMiddleware");
 const chatController = require("../controllers/chat.controller");
 
-// ============================================================================
-// 🔐 ALL CHAT ROUTES REQUIRE AUTHENTICATION
-// ============================================================================
+// All chat routes require a logged-in user
 router.use(verifyAuth);
 
 // ============================================================================
-// 📊 UTILITIES & SEARCH (MUST COME BEFORE DYNAMIC ROUTES TO AVOID CONFLICTS)
+// 📊 UTILITIES  (static segments — must come before /:param routes)
 // ============================================================================
 
-/**
- * GET /api/chat/unread-count
- * Get total unread message count for badge display
- * Auth: Required
- */
+// GET /api/chat/unread-count
 router.get("/unread-count", chatController.getUnreadCount);
 
-/**
- * GET /api/chat/search/users
- * Search for users to start a direct chat with
- * Query: ?query=string&excludeJobs=true
- * Auth: Required
- */
+// GET /api/chat/search/users?query=...
 router.get("/search/users", chatController.searchUsers);
 
 // ============================================================================
-// 📋 CONVERSATION ROUTES
+// 📋 CONVERSATIONS
 // ============================================================================
 
-/**
- * GET /api/chat/conversations
- * List all conversations for authenticated user
- * Query: ?page=1&limit=20&type=direct|job
- * Auth: Required
- */
-router.get("/conversations", chatController.getConversations);
+// GET  /api/chat/conversations           — list all conversations
+// POST /api/chat/conversations/direct    — start or get a DM
+// POST /api/chat/conversations/job/:jobId — start or get a job chat
+router.get( "/conversations",                  chatController.getConversations);
+router.post("/conversations/direct",           chatController.createDirectChat);
+router.post("/conversations/job/:jobId",       chatController.getOrCreateJobChat);
 
-/**
- * POST /api/chat/conversations/direct
- * Create or retrieve a direct message conversation
- * Body: { participantId: "user_id" }
- * Auth: Required
- */
-router.post("/conversations/direct", chatController.createDirectChat);
-
-/**
- * POST /api/chat/conversations/job/:jobId
- * Get or create a job-specific chat conversation
- * Auth: Required (Client or Assigned Worker only)
- */
-router.post("/conversations/job/:jobId", chatController.getOrCreateJobChat);
-
-/**
- * GET /api/chat/conversations/:conversationId
- * Get details of a specific conversation
- * Auth: Required (Participant only)
- */
-router.get("/conversations/:conversationId", chatController.getConversation);
-
-/**
- * GET /api/chat/conversations/:conversationId/messages
- * Get message history for a conversation (paginated)
- * Query: ?page=1&limit=50&before=ISO_TIMESTAMP
- * Auth: Required (Participant only)
- */
-router.get("/conversations/:conversationId/messages", chatController.getMessages);
-
-/**
- * POST /api/chat/conversations/:conversationId/messages
- * Send a new message (REST fallback - primary flow is WebSocket)
- * Body: { content: "text", attachments: [{url, filename, mimeType, size}] }
- * Auth: Required (Participant only)
- */
-router.post("/conversations/:conversationId/messages", chatController.sendMessage);
-
-/**
- * DELETE /api/chat/conversations/:conversationId
- * Hide/delete a conversation for the current user
- * Auth: Required (Participant only)
- */
-router.delete("/conversations/:conversationId", chatController.deleteConversation);
+// GET    /api/chat/conversations/:conversationId            — single conversation
+// GET    /api/chat/conversations/:conversationId/messages   — message history
+// POST   /api/chat/conversations/:conversationId/messages   — send message (REST fallback)
+// DELETE /api/chat/conversations/:conversationId            — hide conversation
+router.get(   "/conversations/:conversationId",           chatController.getConversation);
+router.get(   "/conversations/:conversationId/messages",  chatController.getMessages);
+router.post(  "/conversations/:conversationId/messages",  chatController.sendMessage);
+router.delete("/conversations/:conversationId",           chatController.deleteConversation);
 
 // ============================================================================
-// 💬 MESSAGE ROUTES
+// 💬 MESSAGES
 // ============================================================================
 
-/**
- * PATCH /api/chat/messages/:messageId/read
- * Mark a specific message as read
- * Auth: Required (Participant only)
- */
-router.patch("/messages/:messageId/read", chatController.markMessageRead);
+// PATCH  /api/chat/messages/:messageId/read  — mark as read
+// DELETE /api/chat/messages/:messageId       — soft delete (sender or admin)
+router.patch( "/messages/:messageId/read", chatController.markMessageRead);
+router.delete("/messages/:messageId",      chatController.deleteMessage);
 
-/**
- * DELETE /api/chat/messages/:messageId
- * Soft delete a message (sender or admin only)
- * Auth: Required (Sender or Admin)
- */
-router.delete("/messages/:messageId", chatController.deleteMessage);
-
-// ============================================================================
-// 🛡️ EXPORT
-// ============================================================================
 module.exports = router;

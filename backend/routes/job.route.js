@@ -1,155 +1,92 @@
+// routes/job.routes.js
 const express = require("express");
-const router = express.Router();
+const router  = express.Router();
 
-const jobController = require("../controllers/job.controller");
-const { verifyAuth, restrictTo } = require("../middlewares/authMiddleware");
-
-console.log(" Job routes file loaded and exporting router");
+const jobController                = require("../controllers/job.controller");
+const { verifyAuth, restrictTo }   = require("../middlewares/authMiddleware");
 
 // ============================================================================
-// 🌍 PUBLIC ROUTES (No Authentication Required)
+// 🌍 PUBLIC ROUTES
 // ============================================================================
 
 /**
  * GET /jobs
- * List all active OPEN jobs with optional filters & pagination
- * Access: Public (sanitized data for non-authenticated users)
- * Note: Only shows jobs with status="open" AND assignedWorker=null
+ * Public job feed — open jobs only, sanitized for unauthenticated viewers
  */
 router.get("/", jobController.getAllJobs);
 
 // ============================================================================
-// 🔐 PROTECTED ROUTES (Authentication Required)
+// 🔐 ALL ROUTES BELOW REQUIRE AUTH
 // ============================================================================
 
 router.use(verifyAuth);
 
 // ---------------------------------------------------------------------------
-// 📋 COLLECTION ROUTES (Must come BEFORE /:id to avoid route conflicts)
+// 📋 COLLECTION / STATIC-SEGMENT ROUTES
+// Must come BEFORE /:id or Express will treat them as IDs
 // ---------------------------------------------------------------------------
 
-/**
- * GET /jobs/provider
- * Get jobs relevant to logged-in provider (matching skills + service areas)
- * Access: Providers only
- */
-router.get("/provider", restrictTo("provider"), jobController.getProviderJobs);
+/** GET /jobs/my              — client's own jobs */
+router.get("/my",               restrictTo("customer"),          jobController.getMyJobs);
+
+/** GET /jobs/offers          — provider's pending job offers */
+router.get("/offers",           restrictTo("provider", "freelancer"),          jobController.getJobOffers);
+
+/** GET /jobs/my-applications — provider's submitted applications */
+router.get("/my-applications",  restrictTo("provider", "freelancer"),          jobController.getMyApplications);
 
 /**
- * GET /jobs/my
- * Get all jobs created by the logged-in client
- * Access: Clients only
+ * GET /jobs/assigned
+ * Provider's jobs where they ARE the assignedWorker.
+ * Covers both direct-hire (Flow A) and accepted applications (Flow B).
+ * FIX: includes "freelancer" role — frontend treats both as providers but
+ * restrictTo("provider") alone was rejecting freelancer-role users with 400.
  */
-router.get("/my", restrictTo("customer"), jobController.getMyJobs);
+router.get("/assigned",         restrictTo("provider", "freelancer"),          jobController.getMyAssignedJobs);
 
-// Add this BEFORE router.get("/:id", ...) to avoid route conflict
-/**
- * GET /jobs/offers
- * Get job offers for logged-in provider
- * Access: Providers only
- */
-router.get("/offers", verifyAuth, jobController.getJobOffers);
-/**
- *  NEW: GET /jobs/my-applications
- * Get jobs provider has applied to (with application status)
- * Access: Providers only
- */
-router.get("/my-applications", restrictTo("provider"), jobController.getMyApplications);
+/** GET /jobs/provider        — jobs matching provider's skills + service areas */
+router.get("/provider",         restrictTo("provider", "freelancer"),          jobController.getProviderJobs);
 
 // ---------------------------------------------------------------------------
-// 🎯 PARAMETERIZED ROUTES (Come AFTER collection routes)
+// 🎯 PARAMETERIZED ROUTES (after all static segments)
 // ---------------------------------------------------------------------------
 
-/**
- * GET /jobs/:id
- * Get single job details (sanitized based on viewer role)
- * Access: Authenticated users (data sanitized by role)
- */
-router.get("/:id", jobController.getJobById);
+/** POST /jobs/add            — create job (client only) */
+router.post("/add",             restrictTo("customer"),          jobController.createJob);
 
-/**
- * POST /jobs/add
- * Create a new job (supports direct hire + open application flows)
- * Access: Clients only
- */
-router.post("/add", restrictTo("customer"), jobController.createJob);
+/** GET  /jobs/:id            — single job detail */
+router.get("/:id",                                               jobController.getJobById);
 
-/**
- * POST /jobs/:id/apply
- * Apply to an open job (provider only, Flow B)
- * Access: Providers only
- */
-router.post("/:id/apply", restrictTo("provider"), jobController.applyToJob);
+/** POST /jobs/:id/apply      — provider applies to open job */
+router.post("/:id/apply",       restrictTo("provider", "freelancer"),          jobController.applyToJob);
 
-/**
- * PATCH /jobs/:id
- * Update job details (client only, safe fields only)
- * Access: Job owner (client) or Admin
- */
-router.patch("/:id", restrictTo("customer"), jobController.updateJob);
+/** PATCH /jobs/:id           — client updates job details */
+router.patch("/:id",            restrictTo("customer"),          jobController.updateJob);
 
-/**
- * PATCH /jobs/:id/cancel
- * Cancel a job (client or assigned provider)
- * Access: Job owner, assigned provider, or Admin
- * Note: Authorization is also checked inside controller for assigned providers
- */
-router.patch("/:id/cancel", jobController.cancelJob);
+/** PATCH /jobs/:id/cancel    — client or assigned provider cancels */
+router.patch("/:id/cancel",                                      jobController.cancelJob);
 
-/**
- * PATCH /jobs/:id/fund-escrow
- * Fund escrow for assigned job (client only)
- * Access: Job owner (client) only
- */
-router.patch("/:id/fund-escrow", restrictTo("customer"), jobController.fundEscrow);
+/** PATCH /jobs/:id/fund-escrow — client funds escrow */
+router.patch("/:id/fund-escrow", restrictTo("customer"),         jobController.fundEscrow);
 
-/**
- * PATCH /jobs/:id/accept-application/:applicationId
- * Accept a provider's application (client only, Flow B)
- * Access: Job owner (client) only
- */
-router.patch("/:id/accept-application/:applicationId", restrictTo("customer"), jobController.acceptApplication);
+/** PATCH /jobs/:id/accept-application/:applicationId — client selects a provider */
+router.patch(
+  "/:id/accept-application/:applicationId",
+  restrictTo("customer"),
+  jobController.acceptApplication
+);
 
-/**
- * PATCH /jobs/:id/respond
- * Accept or decline a job offer (provider only, Flow A & B)
- * Access: Assigned provider only
- * Note: Controller also verifies user is the assignedWorker for this job
- */
-router.patch("/:id/respond", restrictTo("provider"), jobController.respondToJobOffer);
+/** PATCH /jobs/:id/respond   — provider accepts or declines offer */
+router.patch("/:id/respond",    restrictTo("provider", "freelancer"),          jobController.respondToJobOffer);
 
-/**
- * PATCH /jobs/:id/start-work
- * Mark work as started (provider only, after escrow funded)
- * Access: Assigned provider only
- * Note: Controller also verifies user is the assignedWorker for this job
- */
-router.patch("/:id/start-work", restrictTo("provider"), jobController.startWork);
 
-/**
- * PATCH /jobs/:id/complete
- * Mark job as completed + optional review (client or assigned provider)
- * Access: Job owner or assigned provider
- * Note: Controller checks if user is either client OR assignedWorker
- */
-router.patch("/:id/complete", jobController.completeJob);
+/** PATCH /jobs/:id/complete  — client or provider marks job complete */
+router.patch("/:id/complete",                                    jobController.completeJob);
 
-/**
- * PATCH /jobs/:id/end
- * Legacy alias for /complete (kept for backward compatibility)
- * Access: Job owner or assigned provider
- */
-router.patch("/:id/end", jobController.endJob);
+/** PATCH /jobs/:id/end       — legacy alias for /complete */
+router.patch("/:id/end",                                         jobController.endJob);
 
-/**
- * DELETE /jobs/:id
- * Soft delete a job (admin or client who created it)
- * Access: Job owner or Admin
- */
-router.delete("/:id", restrictTo("customer", "admin"), jobController.deleteJob);
-
-// ============================================================================
-// EXPORT
-// ============================================================================
+/** DELETE /jobs/:id          — soft delete (owner or admin) */
+router.delete("/:id",           restrictTo("customer", "admin"), jobController.deleteJob);
 
 module.exports = router;
