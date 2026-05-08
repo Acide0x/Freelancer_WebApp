@@ -2,6 +2,7 @@
 const Job  = require("../models/job.model");
 const User = require("../models/user.model");
 const mongoose = require("mongoose");
+const { Wallet, Transaction } = require("../models/wallet.model");
 
 // ============================================================================
 // 🔁 HELPERS & UTILITIES
@@ -46,7 +47,7 @@ const isAssignedWorker = (job, userId) => {
 const getAvailableActions = (job, user) => {
   if (!user?._id) return [];
 
-  const userId     = (user._id ?? user.id).toString(); // JWT sets .id; Mongoose sets ._id — handle both
+  const userId     = (user._id ?? user.id).toString();
   const isClient   = isJobOwner(job, userId);
   const isProvider = isAssignedWorker(job, userId);
   const actions    = [];
@@ -63,13 +64,11 @@ const getAvailableActions = (job, user) => {
       break;
 
     case "in_progress":
-      // Client can pay admin (fund escrow) at any point during work
       if (isClient && !job.escrow?.funded) actions.push("fund_escrow");
       if (isClient || isProvider)          actions.push("complete_job", "cancel");
       break;
 
     case "escrow_funded":
-      // Escrow secured; either party can still complete or cancel
       if (isClient || isProvider) actions.push("complete_job", "cancel");
       break;
 
@@ -99,9 +98,7 @@ const sanitizeJob = (job, requestingUser) => {
   }
 
   if (requestingUser.role !== "admin") {
-    const uid = (requestingUser._id ?? requestingUser.id).toString(); // JWT sets .id
-    // job.client / job.assignedWorker may be populated objects OR raw ObjectIds
-    // Using .toString() on a populated object gives "[object Object]" — always extract _id first
+    const uid = (requestingUser._id ?? requestingUser.id).toString();
     const clientId = (job.client?._id ?? job.client)?.toString();
     const workerId = (job.assignedWorker?._id ?? job.assignedWorker)?.toString();
     const isParticipant = clientId === uid || workerId === uid;
@@ -156,6 +153,10 @@ const parseStatusFilter = (status) => {
   return statuses.length === 1 ? statuses[0] : { $in: statuses };
 };
 
+// ─── Paisa helpers (keep amounts consistent with payment system) ──────────────
+const rsToPaisa  = (rs)    => Math.round(parseFloat(rs) * 100);
+const paisaToRs  = (paisa) => +(paisa / 100).toFixed(2);
+
 // ─── Base filter (excludes soft-deleted records) ─────────────────────────────
 const notDeleted = { isDeleted: { $ne: true } };
 
@@ -168,8 +169,6 @@ const notDeleted = { isDeleted: { $ne: true } };
  * Create a job.
  *   Flow A (direct hire): client supplies assignedWorker → status = pending_provider_acceptance
  *   Flow B (open post)  : no assignedWorker              → status = open
- *
- * isLive is NOT set here — it becomes true only once escrow is funded.
  */
 exports.createJob = async (req, res) => {
   const session = await mongoose.startSession();
@@ -225,7 +224,7 @@ exports.createJob = async (req, res) => {
       if (!isNaN(lat) && !isNaN(lng)) {
         location.latitude    = lat;
         location.longitude   = lng;
-        location.coordinates = [lng, lat]; // GeoJSON order
+        location.coordinates = [lng, lat];
       }
     }
 
@@ -249,10 +248,8 @@ exports.createJob = async (req, res) => {
       urgency:        urgency || "medium",
       preferredDate:  preferredDate || undefined,
       escrow:         { amount: budgetNum, funded: false },
-      // Flow A → awaiting provider response; Flow B → open for applicants
       status:         assignedWorker ? "pending_provider_acceptance" : "open",
       assignedWorker: assignedWorker || null,
-      // isLive stays false — provider hasn't committed yet
       isLive:         false,
       isDeleted:      false,
     };
@@ -499,8 +496,6 @@ exports.getMyApplications = async (req, res) => {
 /**
  * GET /jobs/assigned
  * Jobs where the logged-in provider is the assignedWorker.
- * Covers both direct-hire (Flow A) and accepted applications (Flow B).
- * Optional ?status= filter; defaults to all active statuses.
  */
 exports.getMyAssignedJobs = async (req, res) => {
   try {
@@ -513,7 +508,6 @@ exports.getMyAssignedJobs = async (req, res) => {
     if (statusFilter) {
       filter.status = statusFilter;
     } else {
-      // Default: everything that isn't terminal
       filter.status = { $nin: ["cancelled", "completed"] };
     }
 
@@ -645,12 +639,10 @@ exports.getJobById = async (req, res) => {
       return res.status(404).json({ success: false, message: "Job not found" });
     }
 
-    // Soft-deleted jobs visible only to owner / admin
     if (job.isDeleted && !isJobOwner(job, req.user?.id) && req.user?.role !== "admin") {
       return res.status(404).json({ success: false, message: "Job not found" });
     }
 
-    // Fire-and-forget view counter
     Job.findByIdAndUpdate(req.params.id, { $inc: { views: 1 } }).catch(() => {});
 
     return res.status(200).json({ success: true, job: sanitizeJob(job, req.user) });
@@ -731,7 +723,6 @@ exports.applyToJob = async (req, res) => {
 /**
  * PATCH /jobs/:id/accept-application/:applicationId
  * Flow B: Client selects a provider → status = pending_provider_acceptance.
- * isLive stays false until the provider accepts and escrow is funded.
  */
 exports.acceptApplication = async (req, res) => {
   try {
@@ -760,7 +751,6 @@ exports.acceptApplication = async (req, res) => {
 
     job.assignedWorker = application.worker;
     job.status         = "pending_provider_acceptance";
-    // isLive stays false — provider hasn't confirmed yet
     await job.save();
 
     console.log(`🔔 Notify provider ${application.worker} that client selected them for job ${jobId}`);
@@ -785,14 +775,13 @@ exports.acceptApplication = async (req, res) => {
  * Provider accepts or declines a job offer (both flows).
  *
  * On ACCEPT:
- *   - status → in_progress  (work begins immediately)
+ *   - status → in_progress
  *   - isLive → true
  *   - provider marked busy + added to user.activeJobs
  *   - job chat room created
  *
  * On DECLINE:
  *   - reopen job for other applicants, or cancel if none remain
- *   - provider availability restored
  */
 exports.respondToJobOffer = async (req, res) => {
   const session = await mongoose.startSession();
@@ -820,6 +809,7 @@ exports.respondToJobOffer = async (req, res) => {
     if (!isAssignedWorker(job, providerId)) {
       return res.status(403).json({ success: false, message: "Only the assigned provider can respond" });
     }
+
     if (job.status !== "pending_provider_acceptance") {
       return res.status(400).json({
         success: false,
@@ -828,11 +818,9 @@ exports.respondToJobOffer = async (req, res) => {
     }
 
     if (action === "accept") {
-      // Provider confirmed → work starts immediately
       job.status = "in_progress";
-      job.isLive = true; // ← job is NOW live
+      job.isLive = true;
 
-      // Mark provider busy and track in activeJobs
       await User.findByIdAndUpdate(
         providerId,
         {
@@ -842,7 +830,6 @@ exports.respondToJobOffer = async (req, res) => {
         { session }
       );
 
-      // Open job chat room
       const { ChatConversation } = require("../models/chat.model");
       await ChatConversation.findOneAndUpdate(
         { jobId: job._id, type: "job" },
@@ -894,7 +881,6 @@ exports.respondToJobOffer = async (req, res) => {
       job.assignedWorker = null;
       job.applications   = job.applications.filter(app => app.worker.toString() !== providerId);
       job.status         = job.applications.length > 0 ? "open" : "cancelled";
-      // isLive was never true at this point
 
       await User.findByIdAndUpdate(
         providerId,
@@ -935,12 +921,12 @@ exports.respondToJobOffer = async (req, res) => {
 
 /**
  * PATCH /jobs/:id/fund-escrow
- * Client pays admin while work is in progress.
- * Job status advances to escrow_funded (work continues uninterrupted).
- * isLive is already true — no change.
+ * Client funds escrow by deducting from their wallet balance.
  *
- * Hook your real payment gateway (Stripe / eSewa / Khalti) here before
- * setting escrow.funded = true.
+ * Requires the client to have topped up their wallet first via
+ * POST /payment/topup/initiate → GET /payment/topup/verify
+ *
+ * Job status: in_progress → escrow_funded
  */
 exports.fundEscrow = async (req, res) => {
   const session = await mongoose.startSession();
@@ -948,45 +934,96 @@ exports.fundEscrow = async (req, res) => {
 
   try {
     const { id: jobId } = req.params;
+
     if (!mongoose.Types.ObjectId.isValid(jobId)) {
+      await session.abortTransaction();
       return res.status(400).json({ success: false, message: "Invalid job ID format" });
     }
 
     const job = await Job.findOne({ _id: jobId, ...notDeleted }).session(session);
-    if (!job) return res.status(404).json({ success: false, message: "Job not found" });
+    if (!job) {
+      await session.abortTransaction();
+      return res.status(404).json({ success: false, message: "Job not found" });
+    }
 
     if (!isJobOwner(job, req.user.id)) {
-      return res.status(403).json({ success: false, message: "Unauthorized" });
+      await session.abortTransaction();
+      return res.status(403).json({ success: false, message: "Only the job client can fund escrow" });
     }
 
-    // Can only fund during active work
-    if (job.status !== "in_progress") {
+    if (!["in_progress", "pending_provider_acceptance"].includes(job.status)) {
+      await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: `Escrow can only be funded while job is in progress (current status: ${job.status})`,
+        message: `Escrow can only be funded while job is in progress or pending (current: ${job.status})`,
       });
     }
-    if (job.escrow.funded) {
+
+    if (job.escrow?.funded) {
+      await session.abortTransaction();
       return res.status(400).json({ success: false, message: "Escrow already funded" });
     }
 
-    // ↓ Insert real payment gateway call here ↓
+    const amountPaisa = rsToPaisa(job.escrow.amount);
+    if (amountPaisa < 1) {
+      await session.abortTransaction();
+      return res.status(400).json({ success: false, message: "Escrow amount is invalid" });
+    }
 
+    // ─── Check wallet balance ────────────────────────────────────────────────
+    const wallet = await Wallet.findOne({ user: req.user.id }).session(session);
+    if (!wallet || wallet.balance < amountPaisa) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: `Insufficient wallet balance. Required: Rs ${paisaToRs(amountPaisa)}, Available: Rs ${paisaToRs(wallet?.balance ?? 0)}`,
+        topupRequired: true,
+        shortfallRs:   paisaToRs(amountPaisa - (wallet?.balance ?? 0)),
+      });
+    }
+
+    // ─── Move balance → lockedBalance ────────────────────────────────────────
+    const balBefore        = wallet.balance;
+    wallet.balance        -= amountPaisa;
+    wallet.lockedBalance  += amountPaisa;
+    wallet.totalSpent     += amountPaisa;
+    wallet.version        += 1;
+    await wallet.save({ session });
+
+    // ─── Transaction record ──────────────────────────────────────────────────
+    await Transaction.create([{
+      wallet:        wallet._id,
+      user:          req.user.id,
+      type:          "escrow_lock",
+      direction:     "debit",
+      amount:        amountPaisa,
+      balanceBefore: balBefore,
+      balanceAfter:  wallet.balance,
+      job:           job._id,
+      status:        "completed",
+      note:          `Escrow funded for job: ${job.title}`,
+      ipAddress:     req.ip,
+      userAgent:     req.get("user-agent"),
+    }], { session });
+
+    // ─── Update job ──────────────────────────────────────────────────────────
     job.escrow.funded   = true;
     job.escrow.fundedAt = new Date();
-    job.status          = "escrow_funded"; // still mid-work; provider continues
-
+    job.status          = "escrow_funded";
     await job.save({ session });
+
     await session.commitTransaction();
 
-    console.log(`💰 Escrow funded for job ${jobId} — payment secured with admin`);
+    console.log(`💰 Escrow funded for job ${jobId} — Rs ${paisaToRs(amountPaisa)} locked from client wallet`);
     console.log(`🔔 Notify provider ${job.assignedWorker} that payment is secured`);
 
     return res.status(200).json({
-      success: true,
-      message: "Payment received. Funds are held securely until the job is complete.",
-      escrow:  job.escrow,
-      status:  job.status,
+      success:          true,
+      message:          "Payment secured. Funds are held until the job is complete.",
+      escrow:           job.escrow,
+      status:           job.status,
+      newBalanceRs:     paisaToRs(wallet.balance),
+      lockedBalanceRs:  paisaToRs(wallet.lockedBalance),
     });
   } catch (error) {
     await session.abortTransaction();
@@ -1003,18 +1040,13 @@ exports.fundEscrow = async (req, res) => {
 
 // NOTE: startWork endpoint removed.
 // Work begins the moment the provider accepts the offer (respondToJobOffer → accept).
-// The chat room and busy-state are set there. No separate "start work" step exists.
 
 /**
  * PATCH /jobs/:id/complete
- * Either party marks job complete. Admin confirms and pays provider.
+ * Either party marks job complete.
+ * Admin then calls POST /payment/escrow/:id/release to pay the provider.
  *
  * Allowed from: in_progress OR escrow_funded
- *  - status → completed, isLive → false
- *  - escrow.releasedAt recorded (admin pays provider out-of-band)
- *  - provider freed from activeJobs, availability restored
- *  - optional review from client
- *  - WebSocket notification + chat archived
  */
 exports.completeJob = async (req, res) => {
   const session = await mongoose.startSession();
@@ -1043,7 +1075,6 @@ exports.completeJob = async (req, res) => {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
 
-    // Allow completion from in_progress (payment pending) or escrow_funded (payment secured)
     if (!["in_progress", "escrow_funded"].includes(job.status)) {
       return res.status(400).json({
         success: false,
@@ -1051,9 +1082,10 @@ exports.completeJob = async (req, res) => {
       });
     }
 
-    job.status            = "completed";
-    job.isLive            = false;
-    job.escrow.releasedAt = new Date(); // signals admin to release payment to provider
+    job.status = "completed";
+    job.isLive = false;
+    // releasedAt signals admin to trigger POST /payment/escrow/:id/release
+    job.escrow.releasedAt = new Date();
 
     // Optional review — client only
     if (isClient && rating != null) {
@@ -1065,7 +1097,6 @@ exports.completeJob = async (req, res) => {
 
       job.review = { rating: ratingNum, comment: comment?.trim() ?? "", date: new Date() };
 
-      // Atomic running-average on provider
       if (job.assignedWorker?._id) {
         const worker = await User.findById(job.assignedWorker._id).session(session);
         if (worker) {
@@ -1124,7 +1155,9 @@ exports.completeJob = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Job completed successfully. Admin will release payment to the provider.",
+      message: job.escrow?.funded
+        ? "Job completed. Admin will release payment to the provider shortly."
+        : "Job completed. Note: escrow was not funded — coordinate payment with admin.",
       job: {
         _id:          job._id,
         status:       job.status,
@@ -1248,7 +1281,11 @@ exports.updateJob = async (req, res) => {
 
 /**
  * PATCH /jobs/:id/cancel
- * Either party cancels. Resets provider state, clears isLive.
+ * Either party cancels.
+ *
+ * If escrow was funded, money is NOT automatically moved — admin must review
+ * and call POST /payment/escrow/:id/refund to return funds to client.
+ * This prevents fraud and allows the platform to settle disputes first.
  */
 exports.cancelJob = async (req, res) => {
   const session = await mongoose.startSession();
@@ -1259,30 +1296,46 @@ exports.cancelJob = async (req, res) => {
     const userId        = req.user.id;
 
     if (!mongoose.Types.ObjectId.isValid(jobId)) {
+      await session.abortTransaction();
       return res.status(400).json({ success: false, message: "Invalid job ID format" });
     }
 
     const job = await Job.findById(jobId).session(session);
-    if (!job) return res.status(404).json({ success: false, message: "Job not found" });
+    if (!job) {
+      await session.abortTransaction();
+      return res.status(404).json({ success: false, message: "Job not found" });
+    }
 
     const isClient   = isJobOwner(job, userId);
     const isProvider = isAssignedWorker(job, userId);
 
     if (!isClient && !isProvider && req.user.role !== "admin") {
+      await session.abortTransaction();
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
     if (["completed", "cancelled"].includes(job.status)) {
+      await session.abortTransaction();
       return res.status(400).json({ success: false, message: `Cannot cancel job with status: ${job.status}` });
     }
+
+    // Determine if a refund needs admin action
+    const pendingRefund = !!(
+      job.escrow?.funded &&
+      !job.escrow?.refundedAt &&
+      !job.escrow?.releasedAt
+    );
 
     job.status = "cancelled";
     job.isLive = false;
 
-    // Trigger admin refund if client had already paid
-    if (job.escrow.funded) {
-      job.escrow.refundedAt = new Date();
-      console.log(`💸 Queue refund to client for job ${jobId}: amount ${job.escrow.amount}`);
-      // Hook your refund logic / payment gateway here
+    if (pendingRefund) {
+      // Money stays locked until admin calls POST /payment/escrow/:id/refund
+      // This is intentional — gives admin time to review before releasing funds
+      console.log(
+        `⚠️  Job ${jobId} cancelled with funded escrow. ` +
+        `Admin must call POST /payment/escrow/${jobId}/refund ` +
+        `to return Rs ${job.escrow.amount} to client ${job.client}`
+      );
     }
 
     if (job.assignedWorker) {
@@ -1300,12 +1353,23 @@ exports.cancelJob = async (req, res) => {
     await session.commitTransaction();
 
     const notifyTo = isClient ? job.assignedWorker : job.client;
-    if (notifyTo) console.log(`🔔 Notify ${notifyTo} that job ${jobId} was cancelled by ${userId}`);
+    if (notifyTo) {
+      console.log(`🔔 Notify ${notifyTo} that job ${jobId} was cancelled by ${userId}`);
+    }
 
     return res.status(200).json({
       success: true,
       message: "Job cancelled successfully",
-      job:     { _id: job._id, status: job.status, isLive: job.isLive, escrow: job.escrow },
+      job: {
+        _id:          job._id,
+        status:       job.status,
+        isLive:       job.isLive,
+        escrow:       job.escrow,
+        pendingRefund,
+      },
+      ...(pendingRefund && {
+        notice: "Escrow was funded. Admin will review and process your refund. Track status at GET /payment/escrow/:id/status",
+      }),
     });
   } catch (error) {
     await session.abortTransaction();

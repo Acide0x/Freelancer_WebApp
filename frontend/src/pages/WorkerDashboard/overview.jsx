@@ -1,4 +1,5 @@
 // overview.jsx
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   XAxis,
@@ -9,65 +10,101 @@ import {
   AreaChart,
   Area,
 } from "recharts";
-import { TrendingUp, CheckCircle2, Clock, Briefcase } from "lucide-react";
+import { TrendingUp, CheckCircle2, Wallet, Lock } from "lucide-react";
+
+const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:5000";
+
+function authHeaders() {
+  return {
+    Authorization: `Bearer ${localStorage.getItem("token")}`,
+    "Content-Type": "application/json",
+  };
+}
 
 const revenueData = [
-  { month: "Jan", revenue: 2400, earnings: 2400 },
-  { month: "Feb", revenue: 3200, earnings: 3100 },
-  { month: "Mar", revenue: 2800, earnings: 2600 },
-  { month: "Apr", revenue: 3900, earnings: 3800 },
-  { month: "May", revenue: 4200, earnings: 4100 },
-  { month: "Jun", revenue: 5100, earnings: 5000 },
+  { month: "Jan", revenue: 2400 },
+  { month: "Feb", revenue: 3200 },
+  { month: "Mar", revenue: 2800 },
+  { month: "Apr", revenue: 3900 },
+  { month: "May", revenue: 4200 },
+  { month: "Jun", revenue: 5100 },
 ];
 
 export default function DashboardOverview() {
+  const [wallet, setWallet] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/payment/wallet`, { headers: authHeaders() })
+      .then(r => r.json())
+      .then(d => { if (d.success) setWallet(d.wallet); })
+      .catch(() => { })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const fmt = (n) => (n || 0).toLocaleString();
+
   return (
     <div className="space-y-6">
       {/* Key Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="border-border/50 bg-card/50 backdrop-blur hover:bg-card/70 transition-all duration-300">
+
+        {/* Wallet Balance */}
+        <Card className="border-border/50 bg-gradient-to-br from-primary/10 to-accent/10 backdrop-blur hover:bg-card/70 transition-all duration-300">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Active Jobs</CardTitle>
-            <Briefcase className="h-4 w-4 text-primary" />
+            <CardTitle className="text-sm font-medium text-muted-foreground">Wallet Balance</CardTitle>
+            <Wallet className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-foreground">12</div>
-            <p className="text-xs text-muted-foreground mt-1">3 proposals waiting</p>
+            <div className="text-3xl font-bold text-foreground">
+              {loading ? "…" : `Rs ${fmt(wallet?.balanceNpr)}`}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">Available to spend</p>
           </CardContent>
         </Card>
 
+        {/* Locked in Escrow */}
         <Card className="border-border/50 bg-card/50 backdrop-blur hover:bg-card/70 transition-all duration-300">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Completed</CardTitle>
-            <CheckCircle2 className="h-4 w-4 text-green-500" />
+            <CardTitle className="text-sm font-medium text-muted-foreground">Locked in Escrow</CardTitle>
+            <Lock className="h-4 w-4 text-yellow-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-foreground">48</div>
-            <p className="text-xs text-muted-foreground mt-1">92% completion rate</p>
+            <div className="text-3xl font-bold text-foreground">
+              {loading ? "…" : `Rs ${fmt(wallet?.lockedNpr)}`}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">Held for active jobs</p>
           </CardContent>
         </Card>
 
+        {/* Total Earned */}
         <Card className="border-border/50 bg-card/50 backdrop-blur hover:bg-card/70 transition-all duration-300">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Earnings</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Earned</CardTitle>
             <TrendingUp className="h-4 w-4 text-chart-1" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-foreground">$24,580</div>
-            <p className="text-xs text-muted-foreground mt-1">+15% this month</p>
+            <div className="text-3xl font-bold text-foreground">
+              {loading ? "…" : `Rs ${fmt(wallet?.totalEarnedNpr)}`}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">Lifetime earnings</p>
           </CardContent>
         </Card>
 
+        {/* Total Spent */}
         <Card className="border-border/50 bg-card/50 backdrop-blur hover:bg-card/70 transition-all duration-300">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Avg Response</CardTitle>
-            <Clock className="h-4 w-4 text-chart-2" />
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Spent</CardTitle>
+            <CheckCircle2 className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-foreground">2.4h</div>
-            <p className="text-xs text-muted-foreground mt-1">Very responsive</p>
+            <div className="text-3xl font-bold text-foreground">
+              {loading ? "…" : `Rs ${fmt(wallet?.totalSpentNpr)}`}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">Across all jobs</p>
           </CardContent>
         </Card>
+
       </div>
 
       {/* Revenue Chart */}

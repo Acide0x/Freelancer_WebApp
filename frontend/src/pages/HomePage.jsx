@@ -109,6 +109,8 @@ export default function HomePage() {
   const [cart, setCart] = useState([])
   const [wishlist, setWishlist] = useState([])
 
+ 
+
   // Auto-advance hero slider
   useEffect(() => {
     const timer = setInterval(() => {

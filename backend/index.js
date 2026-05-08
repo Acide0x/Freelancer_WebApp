@@ -5,25 +5,37 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const http = require("http");
-const { initSocket } = require("./socket/server"); // ✅ Correct path
+const { initSocket } = require("./socket/server");
 
-// Import routes
+// ── Routes ───────────────────────────────────────────────────────────────────
 const userRoutes = require("./routes/user.route");
 const jobRoutes = require("./routes/job.route");
 const adminRoutes = require("./routes/admin.route");
 const uploadRoutes = require("./routes/upload.route");
 const discussionRoutes = require("./routes/discussion.route");
 const commentRoutes = require("./routes/comment.route");
-const chatRoutes = require("./routes/chat.routes"); // ✅ Chat routes
+const chatRoutes = require("./routes/chat.routes");
+const paymentRoutes = require("./routes/payment.routes");
 
 const app = express();
 const server = http.createServer(app);
 
 // ============================================================================
-// ⚙️ MIDDLEWARE
+// ⚙️  MIDDLEWARE
 // ============================================================================
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+//
+// ⚠️  ORDER MATTERS:
+//   The Stripe webhook needs the RAW request body for signature verification.
+//   express.raw() is applied ONLY to that one path inside payment.routes.js
+//   (via router.post("/webhook/stripe", express.raw(...), stripeWebhook)).
+//
+//   Do NOT mount paymentRoutes here with express.raw() — that caused the
+//   double-mount bug where every /payment/* route ran twice.
+//   Just let express.json() below handle everything except the webhook path,
+//   which opts out via express.raw() in the router itself.
+//
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(cookieParser());
 
 // ============================================================================
@@ -35,20 +47,22 @@ const allowedOrigins = [
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    console.warn(`🚫 CORS blocked: ${origin}`);
-    return callback(new Error("Not allowed by CORS"));
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
-}));
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      console.warn(`🚫 CORS blocked: ${origin}`);
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
+  })
+);
 
 // ============================================================================
-// 🗄️ MongoDB
+// 🗄️  MongoDB
 // ============================================================================
 const connectDB = async () => {
   try {
@@ -65,7 +79,7 @@ const connectDB = async () => {
 };
 
 // ============================================================================
-// 🗂️ Routes (FLAT STRUCTURE - NO /api PREFIX)
+// 🗂️  ROUTES
 // ============================================================================
 app.use("/users", userRoutes);
 app.use("/jobs", jobRoutes);
@@ -73,29 +87,40 @@ app.use("/admins", adminRoutes);
 app.use("/upload", uploadRoutes);
 app.use("/discussions", discussionRoutes);
 app.use("/comments", commentRoutes);
-app.use("/chat", chatRoutes); // ✅ Chat at /chat (not /api/chat)
+app.use("/chat", chatRoutes);
+app.use("/payment", paymentRoutes); // single mount — webhook lives inside the router
 
 // ============================================================================
-// 🔌 WebSocket
+// 🔌 SOCKET.IO
+// Initialize AFTER routes so all models are already required and registered.
+// initSocket() also exports emit() — any controller can now do:
+//   const { emit } = require("./socket/server");
+//   emit("user:abc", "unread:increment", { conversationId });
 // ============================================================================
 const io = initSocket(server);
+
+// Make io available on req via app.get("io") if ever needed in middleware
 app.set("io", io);
 
 // ============================================================================
-// 🏥 Health Checks
+// 🏥 HEALTH CHECKS
 // ============================================================================
 app.get("/", (req, res) => {
   res.json({
     success: true,
     message: "🚀 Freelancer WebApp Backend",
-    websocket: { status: io ? "active" : "inactive", clients: io?.engine?.clientsCount || 0 },
+    websocket: {
+      status: io ? "active" : "inactive",
+      clients: io?.engine?.clientsCount ?? 0,
+    },
     endpoints: {
       users: "/users",
       jobs: "/jobs",
       chat: "/chat",
       discussions: "/discussions",
       comments: "/comments",
-    }
+      payment: "/payment",
+    },
   });
 });
 
@@ -104,64 +129,65 @@ app.get("/ws/health", (req, res) => {
     success: true,
     websocket: {
       status: io ? "active" : "inactive",
-      clients: io?.engine?.clientsCount || 0,
-    }
+      clients: io?.engine?.clientsCount ?? 0,
+    },
   });
 });
 
 // ============================================================================
-// ❌ 404 & Error Handlers
+// ❌ 404 & ERROR HANDLERS
 // ============================================================================
 app.use((req, res) => {
-  res.status(404).json({ success: false, message: "Route not found", path: req.originalUrl });
+  res.status(404).json({
+    success: false,
+    message: "Route not found",
+    path: req.originalUrl,
+  });
 });
 
 app.use((err, req, res, next) => {
   console.error("💥 Error:", err.name, err.message);
-  
+
   if (err.name === "ValidationError") {
-    return res.status(400).json({ 
-      success: false, 
+    return res.status(400).json({
+      success: false,
       message: "Validation failed",
-      errors: Object.values(err.errors).map(e => e.message)
+      errors: Object.values(err.errors).map((e) => e.message),
     });
   }
-  
   if (err.code === 11000) {
     return res.status(400).json({ success: false, message: "Duplicate value" });
   }
-  
   if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
     return res.status(401).json({ success: false, message: "Invalid token" });
   }
-  
+
   res.status(500).json({ success: false, message: "Server error" });
 });
 
 // ============================================================================
-// 🚀 Start Server
+// 🚀 START
 // ============================================================================
 const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
   await connectDB();
-  
+
   server.listen(PORT, () => {
-    console.log(`🚀 Server: http://localhost:${PORT}`);
+    console.log(`🚀 Server:    http://localhost:${PORT}`);
     console.log(`🔌 WebSocket: ws://localhost:${PORT}`);
   });
-  
-  // Graceful shutdown
+
   const shutdown = async (signal) => {
-    console.log(`🛑 ${signal} - shutting down`);
+    console.log(`🛑 ${signal} — shutting down gracefully`);
     server.close(() => {
       io?.close();
       mongoose.disconnect();
       process.exit(0);
     });
-    setTimeout(() => process.exit(1), 10000);
+    setTimeout(() => process.exit(1), 10_000);
   };
-  
+
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
 };

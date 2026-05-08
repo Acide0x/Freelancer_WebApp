@@ -7,25 +7,26 @@ import HomePage from "./Home";
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
 import JobsPage from "./pages/JobListing";
-import JobDetailPage from "./pages/JobDetailPage"; 
+import JobDetailPage from "./pages/JobDetailPage";
 import WorkersPage from "./pages/WorkerListing";
 import WorkerProfilePage from "./pages/WorkerDetailPage";
 import JobOffersPage from "./pages/JobOfferPage";
 import MyApplicationsPage from "./pages/MyJobApplicationPage";
 import ProfilePage from "./pages/ProfilePage";
-import WorkersDashboardPage from "./pages/WorkersDashboardPage"; 
+import WorkersDashboardPage from "./pages/WorkersDashboardPage";
 import AdminDashboardClient from "./pages/AdminDashboardPage";
 import DiscussionForum from "./pages/DiscussionPostListing";
-import DiscussionPage from "./pages/DiscussionPostDetailsPage";    
+import DiscussionPage from "./pages/DiscussionPostDetailsPage";
 import ActiveJobsPage from "./pages/ActiveJobsPage"; // ✅ NEW: Active Jobs Dashboard with Chat
+// import JobChatPage from "./pages/JobChatPage";
 
 // Components
 import Navbar from './components/Navbar';
-import Footer from './components/footer'; 
+import Footer from './components/footer';
 
 // Context & Utils
 import { AppProvider } from './context/AppContext';
-import { Toaster } from 'sonner'; 
+import { Toaster } from 'sonner';
 
 export default function App() {
   return (
@@ -42,18 +43,19 @@ export default function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/signup" element={<SignupPage />} />
-            
+
             {/* Job Routes */}
             <Route path="/jobs" element={<JobsPage />} />
             {/* ⚠️ Static segments MUST come before /:id — React Router matches top-down */}
+            // App.jsx — replace the two active routes with one
             <Route path="/jobs/active" element={<ActiveJobsPage />} />
-            <Route path="/jobs/active/:jobId" element={<ActiveJobsPage />} />
             <Route path="/jobs/:id" element={<JobDetailPage />} />
-            
+            {/* <Route path="/jobs/:id/chat" element={<JobChatPage />} /> */}
+
             {/* Worker Routes */}
             <Route path="/workers" element={<WorkersPage />} />
             <Route path="/provider/:id" element={<WorkerProfilePage />} />
-            
+
             {/* Other Routes */}
             <Route path="/job-offers/:id" element={<JobOffersPage />} />
             <Route path="/my-applications/:id" element={<MyApplicationsPage />} />
@@ -63,8 +65,8 @@ export default function App() {
 
             {/* Discussion Forum Route */}
             <Route path="/discussions" element={<DiscussionForum />} />
-            <Route path="/discussions/:id" element={<DiscussionPage />} /> 
-            
+            <Route path="/discussions/:id" element={<DiscussionPage />} />
+
             {/* Catch-all fallback */}
             <Route path="*" element={<HomePage />} />
           </Routes>

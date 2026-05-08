@@ -56,6 +56,10 @@ export default function Navbar() {
   useEffect(() => {
     refreshUser();
 
+    // Get and log user token
+    const token = localStorage.getItem("token");
+    console.log("User Token:", token);
+
     const handleStorageChange = (e) => {
       if (e.key === "user") {
         refreshUser();
