@@ -214,18 +214,26 @@ export default function OnboardingTab({
   // Helper to upload a single image to backend → Cloudinary
   const uploadImage = async (file) => {
     const formData = new FormData();
-    formData.append("image", file);
+    formData.append("file", file);
+    formData.append("upload_preset", import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET);
+    formData.append("folder", "portfolio_images");
 
     try {
-      const response = await api.post("/upload/image", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-      });
-      return response.data.url; // Cloudinary secure URL
+      const response = await fetch(
+        `https://api.cloudinary.com/v1_1/${import.meta.env.VITE_CLOUDINARY_CLOUD_NAME}/image/upload`,
+        { method: "POST", body: formData }
+      );
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error?.message || "Cloudinary upload failed");
+      }
+
+      const data = await response.json();
+      return data.secure_url; // ✅ This is what gets saved to your backend
     } catch (error) {
       console.error("Image upload failed:", error);
-      toast.error(error.response?.data?.message || "Failed to upload image");
+      toast.error(error.message || "Failed to upload image");
       throw error;
     }
   };
@@ -320,7 +328,7 @@ export default function OnboardingTab({
             <CheckCircle2 className="w-10 h-10 text-green-600" />
           </div>
           <h2 className="text-3xl font-black mb-4 italic tracking-tighter uppercase">
-            Profile Approved 
+            Profile Approved
           </h2>
           <p className="text-gray-500 max-w-md mx-auto font-medium">
             Your provider profile is live! Below is your current public profile.
