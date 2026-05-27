@@ -16,6 +16,8 @@ const discussionRoutes = require("./routes/discussion.route");
 const commentRoutes = require("./routes/comment.route");
 const chatRoutes = require("./routes/chat.routes");
 const paymentRoutes = require("./routes/payment.routes");
+const notificationRoutes = require("./routes/notification.routes");
+const reviewRoutes = require("./routes/review.route");
 
 const app = express();
 const server = http.createServer(app);
@@ -77,8 +79,11 @@ app.use("/admins", adminRoutes);
 app.use("/upload", uploadRoutes);
 app.use("/discussions", discussionRoutes);
 app.use("/comments", commentRoutes);
+app.use("/notifications", notificationRoutes);
 app.use("/chat", chatRoutes);
 app.use("/payment", paymentRoutes);
+app.use("/notifications", notificationRoutes);
+app.use("/reviews", reviewRoutes);
 
 // ============================================================================
 // 🔌 SOCKET.IO
@@ -104,6 +109,8 @@ app.get("/", (req, res) => {
       discussions: "/discussions",
       comments: "/comments",
       payment: "/payment",
+      notifications: "/notifications",
+      reviews: "/reviews",
     },
   });
 });

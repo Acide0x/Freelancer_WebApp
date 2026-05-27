@@ -20,6 +20,7 @@ import DiscussionPage from "./pages/DiscussionPostDetailsPage";
 import ActiveJobsPage from "./pages/ActiveJobsPage"; 
 import AdminLayout from "./pages/AdminLayoutPage";
 import KYCVerification from "./pages/KYCVerificationPage";
+import NotificationsPage from "./pages/NotificationsPage";
 // import JobChatPage from "./pages/JobChatPage";
 
 // Components
@@ -28,15 +29,18 @@ import Footer from './components/Footer';
 
 // Context & Utils
 import { Toaster } from 'sonner';
+import { AuthProvider } from './context/AuthContext'; // 🔐 Import AuthProvider
 
 export default function App() {
   return (
-      <BrowserRouter
-        future={{
-          v7_startTransition: true,
-          v7_relativeSplatPath: true,
-        }}
-      >
+    <BrowserRouter
+      future={{
+        v7_startTransition: true,
+        v7_relativeSplatPath: true,
+      }}
+    >
+      {/* 🔐 Wrap entire app with AuthProvider */}
+      <AuthProvider>
         <Navbar />
         <main className="min-h-screen">
           <Routes>
@@ -69,13 +73,15 @@ export default function App() {
             {/* Admin Routes */}
             <Route path="/admin/*" element={<AdminLayout />} />
             <Route path="/kyc-verification" element={<KYCVerification />} />
-
+            <Route path="/notifications" element={<NotificationsPage />} />
+            
             {/* Catch-all fallback */}
             <Route path="*" element={<HomePage />} />
           </Routes>
         </main>
         <Footer />
         <Toaster position="bottom-center" richColors />
-      </BrowserRouter>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }

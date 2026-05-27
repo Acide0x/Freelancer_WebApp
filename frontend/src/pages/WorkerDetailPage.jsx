@@ -1,10 +1,13 @@
 // src/pages/ProviderProfile.jsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Star, MapPin, CheckCircle, MessageSquare, Share2, Heart, ChevronLeft, X, Loader2 } from "lucide-react";
+import {
+  Star, MapPin, CheckCircle, MessageSquare, Share2, Heart,
+  ChevronLeft, X, Loader2, ChevronDown,
+} from "lucide-react";
 import { Toaster, toast } from "sonner";
 import api from "@/api/api";
 
@@ -16,7 +19,6 @@ const transformProvider = (backendData) => {
   const provider = backendData.provider || backendData;
 
   return {
-    // 🔑 Expose both ID formats for backend compatibility
     id: provider.id || provider._id,
     _id: provider._id || provider.id,
 
@@ -47,10 +49,10 @@ const transformProvider = (backendData) => {
     travelThresholdKm: Number(provider.travelThresholdKm) || Number(provider.providerDetails?.travelThresholdKm) || 0,
     fixedRateProjects: provider.fixedRateProjects || provider.providerDetails?.fixedRateProjects || [],
 
-    location: typeof provider.location === 'string'
+    location: typeof provider.location === "string"
       ? provider.location
       : provider.location?.address
-      || [provider.location?.city, provider.location?.state, provider.location?.country].filter(Boolean).join(', ')
+      || [provider.location?.city, provider.location?.state, provider.location?.country].filter(Boolean).join(", ")
       || "Location not specified",
     locationDetails: provider.location || {},
     coordinates: provider.location?.coordinates || provider.coordinates || null,
@@ -77,15 +79,9 @@ const transformProvider = (backendData) => {
       description: item.description,
     })) || [],
 
+    // Aggregate numbers from User.ratings — used for the header display
     rating: Number(provider.rating) || Number(provider.ratings?.average) || 0,
     reviewsCount: Number(provider.reviewsCount) || Number(provider.ratings?.count) || 0,
-    reviews: provider.reviews?.map((review) => ({
-      id: review.id || review._id,
-      clientName: review.clientName || review.reviewerName || "Anonymous",
-      rating: review.rating,
-      comment: review.comment,
-      date: review.date,
-    })) || [],
 
     createdAt: provider.createdAt,
     updatedAt: provider.updatedAt,
@@ -94,36 +90,266 @@ const transformProvider = (backendData) => {
 };
 
 // ============================================================================
+// TRANSFORM A REVIEW DOCUMENT FROM THE REVIEW API
+// ============================================================================
+const transformReview = (raw) => ({
+  id: raw._id || raw.id,
+  // reviewer is populated: { fullName, avatar, role }
+  clientName: raw.reviewer?.fullName || "Anonymous",
+  reviewerAvatar: raw.reviewer?.avatar || null,
+  reviewerRole: raw.reviewer?.role || "customer",
+  rating: raw.rating,
+  comment: raw.comment || "",
+  date: raw.createdAt || raw.date,
+  jobTitle: raw.job?.title || null,
+  type: raw.type, // "client_to_provider" | "provider_to_client"
+});
+
+// ============================================================================
 // REUSABLE COMPONENTS
 // ============================================================================
 
+function StarDisplay({ rating, size = "sm" }) {
+  const cls = size === "lg" ? "w-5 h-5" : "w-4 h-4";
+  return (
+    <div className="flex gap-0.5">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <Star
+          key={i}
+          className={`${cls} ${
+            i < Math.floor(rating)
+              ? "text-amber-400 fill-amber-400"
+              : i < rating
+              ? "text-amber-300 fill-amber-300"
+              : "text-foreground/20 fill-transparent"
+          }`}
+        />
+      ))}
+    </div>
+  );
+}
+
+function RatingBar({ label, count, total }) {
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  return (
+    <div className="flex items-center gap-3 text-sm">
+      <span className="w-6 text-right text-foreground/60 shrink-0">{label}</span>
+      <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400 shrink-0" />
+      <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+        <div
+          className="h-full bg-amber-400 rounded-full transition-all duration-500"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="w-8 text-foreground/50 shrink-0">{count}</span>
+    </div>
+  );
+}
+
 function ReviewCard({ review }) {
   return (
-    <Card className="p-5 border border-border">
-      <div className="flex items-start justify-between mb-3">
-        <div>
-          <p className="font-semibold text-foreground">{review.clientName}</p>
-          <p className="text-xs text-foreground/60">{new Date(review.date).toLocaleDateString()}</p>
+    <Card className="p-5 border border-border hover:shadow-md transition-shadow">
+      <div className="flex items-start justify-between gap-3 mb-3">
+        {/* Reviewer info */}
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center text-sm font-bold text-blue-700 shrink-0 overflow-hidden">
+            {review.reviewerAvatar ? (
+              <img
+                src={review.reviewerAvatar}
+                alt={review.clientName}
+                className="w-full h-full object-cover"
+                onError={(e) => { e.target.style.display = "none"; }}
+              />
+            ) : (
+              review.clientName.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()
+            )}
+          </div>
+          <div>
+            <p className="font-semibold text-foreground text-sm leading-tight">{review.clientName}</p>
+            {review.jobTitle && (
+              <p className="text-xs text-foreground/50 mt-0.5 truncate max-w-[160px]">
+                {review.jobTitle}
+              </p>
+            )}
+          </div>
         </div>
-        <div className="flex gap-0.5">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <Star
-              key={i}
-              className={`w-4 h-4 ${i < Math.floor(review.rating)
-                ? "text-green-500 fill-green-500"
-                : i < review.rating
-                  ? "text-green-300 fill-green-300"
-                  : "text-foreground/30"
-                }`}
-            />
-          ))}
+        {/* Stars + date */}
+        <div className="text-right shrink-0">
+          <StarDisplay rating={review.rating} />
+          <p className="text-xs text-foreground/40 mt-1">
+            {new Date(review.date).toLocaleDateString("en-GB", {
+              day: "numeric", month: "short", year: "numeric",
+            })}
+          </p>
         </div>
       </div>
-      <p className="text-sm text-foreground/80 line-clamp-3">{review.comment}</p>
+      {review.comment && (
+        <p className="text-sm text-foreground/75 leading-relaxed">{review.comment}</p>
+      )}
     </Card>
   );
 }
 
+// Rating breakdown: counts per star level
+function RatingSummary({ reviews, average, total }) {
+  const counts = [5, 4, 3, 2, 1].map((star) => ({
+    label: star,
+    count: reviews.filter((r) => Math.floor(r.rating) === star).length,
+  }));
+
+  return (
+    <div className="flex flex-col sm:flex-row gap-6 p-5 bg-muted/50 rounded-xl border border-border mb-6">
+      {/* Big number */}
+      <div className="flex flex-col items-center justify-center sm:border-r border-border sm:pr-6 shrink-0">
+        <span className="text-5xl font-extrabold text-foreground">{average.toFixed(1)}</span>
+        <StarDisplay rating={average} size="lg" />
+        <span className="text-sm text-foreground/50 mt-1">{total} review{total !== 1 ? "s" : ""}</span>
+      </div>
+      {/* Bars */}
+      <div className="flex-1 space-y-2 justify-center flex flex-col">
+        {counts.map(({ label, count }) => (
+          <RatingBar key={label} label={label} count={count} total={total} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// REVIEWS SECTION — fetches from GET /reviews/user/:userId?type=client_to_provider
+// ============================================================================
+const PAGE_SIZE = 5;
+
+function ReviewsSection({ providerId }) {
+  const [reviews, setReviews]       = useState([]);
+  const [loading, setLoading]       = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError]           = useState(null);
+  const [page, setPage]             = useState(1);
+  const [hasMore, setHasMore]       = useState(false);
+  const [total, setTotal]           = useState(0);
+  const [average, setAverage]       = useState(0);
+
+  // Initial load
+  useEffect(() => {
+    if (!providerId) return;
+    setLoading(true);
+    setError(null);
+    setReviews([]);
+    setPage(1);
+
+    api
+      .get(`/reviews/user/${providerId}`, {
+        params: { type: "client_to_provider", page: 1, limit: PAGE_SIZE },
+      })
+      .then(({ data }) => {
+        if (data?.success) {
+          const transformed = (data.reviews || []).map(transformReview);
+          setReviews(transformed);
+          setTotal(data.pagination?.totalReviews ?? transformed.length);
+          setHasMore(data.pagination?.hasMore ?? false);
+          // Compute average from what we have if backend didn't supply it
+          if (transformed.length > 0) {
+            const sum = transformed.reduce((s, r) => s + r.rating, 0);
+            setAverage(parseFloat((sum / transformed.length).toFixed(2)));
+          }
+        } else {
+          setError(data?.message || "Failed to load reviews");
+        }
+      })
+      .catch((err) => {
+        setError(err.response?.data?.message || "Could not load reviews");
+      })
+      .finally(() => setLoading(false));
+  }, [providerId]);
+
+  const loadMore = useCallback(() => {
+    if (loadingMore || !hasMore) return;
+    const nextPage = page + 1;
+    setLoadingMore(true);
+
+    api
+      .get(`/reviews/user/${providerId}`, {
+        params: { type: "client_to_provider", page: nextPage, limit: PAGE_SIZE },
+      })
+      .then(({ data }) => {
+        if (data?.success) {
+          const transformed = (data.reviews || []).map(transformReview);
+          setReviews((prev) => [...prev, ...transformed]);
+          setPage(nextPage);
+          setHasMore(data.pagination?.hasMore ?? false);
+        }
+      })
+      .catch(() => toast.error("Failed to load more reviews"))
+      .finally(() => setLoadingMore(false));
+  }, [providerId, page, hasMore, loadingMore]);
+
+  // ── Render states ────────────────────────────────────────────────────────────
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12 gap-3 text-foreground/50">
+        <Loader2 className="w-5 h-5 animate-spin" />
+        <span className="text-sm">Loading reviews…</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="py-8 text-center">
+        <p className="text-sm text-red-500 mb-3">{error}</p>
+        <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  if (reviews.length === 0) {
+    return (
+      <div className="py-12 text-center text-foreground/50">
+        <Star className="w-10 h-10 mx-auto mb-3 opacity-20" />
+        <p className="font-medium">No reviews yet</p>
+        <p className="text-sm mt-1">Be the first to leave a review after hiring this provider.</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <RatingSummary reviews={reviews} average={average} total={total} />
+
+      <div className="space-y-4">
+        {reviews.map((review) => (
+          <ReviewCard key={review.id} review={review} />
+        ))}
+      </div>
+
+      {hasMore && (
+        <div className="mt-6 text-center">
+          <Button
+            variant="outline"
+            onClick={loadMore}
+            disabled={loadingMore}
+            className="gap-2"
+          >
+            {loadingMore ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <ChevronDown className="w-4 h-4" />
+            )}
+            {loadingMore ? "Loading…" : `Load more reviews (${total - reviews.length} remaining)`}
+          </Button>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ============================================================================
+// SKILL ITEM
+// ============================================================================
 function SkillItem({ skill }) {
   return (
     <div className="mb-5">
@@ -142,6 +368,9 @@ function SkillItem({ skill }) {
   );
 }
 
+// ============================================================================
+// PORTFOLIO GALLERY
+// ============================================================================
 function PortfolioGallery({ portfolio }) {
   const [selectedImage, setSelectedImage] = useState(null);
   if (!portfolio || portfolio.length === 0) return null;
@@ -208,7 +437,7 @@ function PortfolioGallery({ portfolio }) {
 }
 
 // ============================================================================
-// BOOKING DIALOG - NO FRONTEND VERIFICATION BLOCKS
+// BOOKING DIALOG
 // ============================================================================
 function BookingDialog({ provider, onClose }) {
   const navigate = useNavigate();
@@ -230,12 +459,8 @@ function BookingDialog({ provider, onClose }) {
     } else if (description.trim().length < 20) {
       newErrors.description = "Please provide more details (min 20 characters)";
     }
-    if (!hours || hoursNum < 1) {
-      newErrors.hours = "Minimum 1 hour required";
-    }
-    if (!jobTitle.trim()) {
-      newErrors.jobTitle = "Job title is required";
-    }
+    if (!hours || hoursNum < 1) newErrors.hours = "Minimum 1 hour required";
+    if (!jobTitle.trim()) newErrors.jobTitle = "Job title is required";
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -246,51 +471,25 @@ function BookingDialog({ provider, onClose }) {
     setLoading(true);
 
     try {
-      //  Ensure provider ID is a valid string ObjectId
       const providerId = (provider._id || provider.id)?.toString?.() || (provider._id || provider.id);
-
-      //  MAP skill name to valid category enum
-      // ⚠️ CHECK YOUR models/job.model.js FOR EXACT CATEGORY ENUM VALUES
       const skillName = (provider.skills?.[0]?.name || "").toLowerCase().trim();
-
-      // 🔍 REPLACE THESE with values from your Job schema's category enum
-      // Example: if your schema has enum: ["general", "electrical_work", "plumbing_work", ...]
       const categoryMap = {
-        electrician: "Electrical",
-        "electrical work": "Electrical",
-        wiring: "Electrical",
-
-        plumber: "Plumbing",
-        plumbing: "Plumbing",
-
-        carpenter: "Carpentry",
-        carpentry: "Carpentry",
-
-        painter: "Painting",
-        painting: "Painting",
-
+        electrician: "Electrical", "electrical work": "Electrical", wiring: "Electrical",
+        plumber: "Plumbing", plumbing: "Plumbing",
+        carpenter: "Carpentry", carpentry: "Carpentry",
+        painter: "Painting", painting: "Painting",
         hvac: "HVAC",
-
-        welder: "Welding",
-        welding: "Welding",
-
-        cook: "Cooking",
-        cooking: "Cooking",
-
+        welder: "Welding", welding: "Welding",
+        cook: "Cooking", cooking: "Cooking",
         mechanic: "Mechanic",
-
-        cleaner: "House Help",
-        cleaning: "House Help",
+        cleaner: "House Help", cleaning: "House Help",
       };
-
-      //  Use mapped category or fallback (must exist in your schema)
       const safeCategory = categoryMap[skillName] || "House Help";
-      
-      //  Build payload - ❌ DO NOT send `status` (backend sets it internally)
+
       const jobPayload = {
         title: jobTitle.trim(),
         description: description.trim(),
-        category: safeCategory, //  Valid enum from mapping
+        category: safeCategory,
         address: (provider.locationDetails?.address || provider.location || "To be confirmed").trim(),
         city: provider.locationDetails?.city?.trim(),
         state: provider.locationDetails?.state?.trim(),
@@ -300,20 +499,17 @@ function BookingDialog({ provider, onClose }) {
         durationUnit: "hours",
         urgency: ["low", "medium", "high"].includes(urgency) ? urgency : "medium",
         assignedWorker: providerId,
-        // ❌ REMOVED: status - backend sets it: assignedWorker ? "pending_provider_acceptance" : "open"
-
-        // Optional GeoJSON:
-        ...(provider.coordinates && Array.isArray(provider.coordinates) && provider.coordinates.length === 2 && {
-          "location.coordinates": [
-            Number(provider.coordinates[0]),
-            Number(provider.coordinates[1])
-          ]
-        }),
+        ...(provider.coordinates &&
+          Array.isArray(provider.coordinates) &&
+          provider.coordinates.length === 2 && {
+            "location.coordinates": [
+              Number(provider.coordinates[0]),
+              Number(provider.coordinates[1]),
+            ],
+          }),
       };
 
-      console.log("📤 Sending job payload:", jobPayload);
       const { data } = await api.post("/jobs/add", jobPayload);
-
       if (data?.success) {
         toast.success(`Hire request sent to ${provider.name}!`);
         onClose();
@@ -326,10 +522,8 @@ function BookingDialog({ provider, onClose }) {
         throw new Error(data?.message || "Failed to create hire request");
       }
     } catch (err) {
-      console.error("🔥 Booking error:", err.response?.data);
       const backendData = err.response?.data;
       const errorMsg = backendData?.message || err.message;
-
       if (backendData?.details?.length > 0) {
         toast.error(
           <div>
@@ -355,7 +549,10 @@ function BookingDialog({ provider, onClose }) {
 
   return (
     <div className="fixed inset-0 bg-black/50 z-40 flex items-center justify-center p-4" onClick={onClose}>
-      <Card className="w-full max-w-md bg-background border-border max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      <Card
+        className="w-full max-w-md bg-background border-border max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between p-6 border-b border-border sticky top-0 bg-background z-10">
           <h2 className="text-xl font-bold text-foreground">Ready to Hire?</h2>
           <button onClick={onClose} className="p-1 hover:bg-muted rounded transition-colors">
@@ -364,15 +561,11 @@ function BookingDialog({ provider, onClose }) {
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
-          {/* Job Title */}
           <div>
             <label className="block text-sm font-medium text-foreground mb-2">Job Title</label>
             <Input
               value={jobTitle}
-              onChange={(e) => {
-                setJobTitle(e.target.value);
-                if (errors.jobTitle) setErrors(prev => ({ ...prev, jobTitle: null }));
-              }}
+              onChange={(e) => { setJobTitle(e.target.value); if (errors.jobTitle) setErrors((p) => ({ ...p, jobTitle: null })); }}
               placeholder="e.g., Home Repair, Website Development"
               className={`w-full ${errors.jobTitle ? "border-red-500" : ""}`}
               maxLength={100}
@@ -380,29 +573,21 @@ function BookingDialog({ provider, onClose }) {
             {errors.jobTitle && <p className="text-xs text-red-500 mt-1">{errors.jobTitle}</p>}
           </div>
 
-          {/* Hours */}
           <div>
             <label className="block text-sm font-medium text-foreground mb-2">Estimated Hours</label>
             <Input
-              type="number"
-              min="1"
-              value={hours}
-              onChange={(e) => {
-                setHours(e.target.value);
-                if (errors.hours) setErrors(prev => ({ ...prev, hours: null }));
-              }}
+              type="number" min="1" value={hours}
+              onChange={(e) => { setHours(e.target.value); if (errors.hours) setErrors((p) => ({ ...p, hours: null })); }}
               className={`w-full ${errors.hours ? "border-red-500" : ""}`}
               placeholder="Enter hours"
             />
             {errors.hours && <p className="text-xs text-red-500 mt-1">{errors.hours}</p>}
           </div>
 
-          {/* Urgency */}
           <div>
             <label className="block text-sm font-medium text-foreground mb-2">Urgency</label>
             <select
-              value={urgency}
-              onChange={(e) => setUrgency(e.target.value)}
+              value={urgency} onChange={(e) => setUrgency(e.target.value)}
               className="w-full p-3 rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="low">Low - Flexible timeline</option>
@@ -411,15 +596,11 @@ function BookingDialog({ provider, onClose }) {
             </select>
           </div>
 
-          {/* Description */}
           <div>
             <label className="block text-sm font-medium text-foreground mb-2">Project Description</label>
             <textarea
               value={description}
-              onChange={(e) => {
-                setDescription(e.target.value);
-                if (errors.description) setErrors(prev => ({ ...prev, description: null }));
-              }}
+              onChange={(e) => { setDescription(e.target.value); if (errors.description) setErrors((p) => ({ ...p, description: null })); }}
               placeholder="Describe your project, timeline, and specific requirements..."
               className={`w-full p-3 rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-32 ${errors.description ? "border-red-500" : ""}`}
               maxLength={500}
@@ -428,7 +609,6 @@ function BookingDialog({ provider, onClose }) {
             <p className="text-xs text-foreground/50 mt-1">{description.length}/500 characters</p>
           </div>
 
-          {/* Cost */}
           <div className="p-4 bg-muted rounded-lg space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-foreground/70">Rate:</span>
@@ -444,30 +624,16 @@ function BookingDialog({ provider, onClose }) {
             </div>
           </div>
 
-          {/* Trust */}
           <div className="p-3 bg-blue-50 rounded-lg border border-blue-200 space-y-1">
-            <p className="text-xs text-blue-900 flex items-center gap-1">
-              <CheckCircle className="w-3.5 h-3.5" /> Payment protected
-            </p>
-            <p className="text-xs text-blue-900 flex items-center gap-1">
-              <CheckCircle className="w-3.5 h-3.5" /> Cancel anytime
-            </p>
+            <p className="text-xs text-blue-900 flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> Payment protected</p>
+            <p className="text-xs text-blue-900 flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> Cancel anytime</p>
           </div>
 
-          {/* Submit */}
           <Button
-            type="submit"
-            disabled={loading}
+            type="submit" disabled={loading}
             className="w-full bg-gradient-to-r from-blue-600 to-green-500 hover:from-blue-700 hover:to-green-600 text-white"
           >
-            {loading ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Sending...
-              </>
-            ) : (
-              "Send Hire Request"
-            )}
+            {loading ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" />Sending...</>) : "Send Hire Request"}
           </Button>
         </form>
       </Card>
@@ -486,28 +652,19 @@ export default function ProviderProfile() {
   const [provider, setProvider] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [isOwner, setIsOwner] = useState(false);
 
   useEffect(() => {
     const fetchProvider = async () => {
-      if (!id) {
-        setError("No provider ID specified");
-        setLoading(false);
-        return;
-      }
+      if (!id) { setError("No provider ID specified"); setLoading(false); return; }
       try {
-        setLoading(true);
-        setError(null);
+        setLoading(true); setError(null);
         const { data } = await api.get(`/users/providers/${id}`);
         if (data?.success && data?.data?.provider) {
-          const transformed = transformProvider(data.data.provider);
-          setProvider(transformed);
-          setIsOwner(data.data.meta?.isOwner || false);
+          setProvider(transformProvider(data.data.provider));
         } else {
           throw new Error(data?.message || "Provider not found");
         }
       } catch (err) {
-        console.error("Failed to fetch provider:", err);
         if (err.response?.status === 404) setError("Provider not found");
         else if (err.response?.status === 403) setError("This profile is not publicly visible");
         else setError("Failed to load profile");
@@ -520,34 +677,20 @@ export default function ProviderProfile() {
   }, [id]);
 
   const handleShare = async () => {
-    const shareUrl = window.location.href;
     try {
       if (navigator.share) {
-        await navigator.share({
-          title: `${provider?.name}'s Profile`,
-          text: provider?.headline,
-          url: shareUrl,
-        });
+        await navigator.share({ title: `${provider?.name}'s Profile`, text: provider?.headline, url: window.location.href });
       } else {
-        await navigator.clipboard.writeText(shareUrl);
+        await navigator.clipboard.writeText(window.location.href);
         toast.success("Link copied!");
       }
-    } catch {
-      toast.error("Failed to share");
-    }
+    } catch { toast.error("Failed to share"); }
   };
 
-  const handleToggleSave = async () => {
-    try {
-      setIsSaved(!isSaved);
-      toast.success(isSaved ? "Removed from favorites" : "Saved to favorites");
-    } catch {
-      toast.error("Failed to update favorites");
-    }
+  const handleToggleSave = () => {
+    setIsSaved((p) => !p);
+    toast.success(isSaved ? "Removed from favorites" : "Saved to favorites");
   };
-
-  //  NO VERIFICATION CHECK - frontend allows hiring any provider
-  // ℹ️ Backend will still enforce its own rules (update job.controller.js to remove isVerified check if needed)
 
   if (loading) {
     return (
@@ -568,9 +711,7 @@ export default function ProviderProfile() {
         <div className="min-h-screen bg-background flex items-center justify-center p-4">
           <Card className="max-w-md w-full p-8 text-center">
             <p className="text-lg font-semibold">{error || "Profile not found"}</p>
-            <Button onClick={() => navigate("/workers")} className="mt-4">
-              Browse Professionals
-            </Button>
+            <Button onClick={() => navigate("/workers")} className="mt-4">Browse Professionals</Button>
           </Card>
         </div>
       </>
@@ -581,7 +722,8 @@ export default function ProviderProfile() {
     <>
       <Toaster />
       <div className="min-h-screen bg-background">
-        {/* Header */}
+
+        {/* Sticky header */}
         <div className="sticky top-0 z-30 bg-card border-b border-border px-4 py-4">
           <div className="max-w-6xl mx-auto flex items-center justify-between">
             <button onClick={() => navigate(-1)} className="flex items-center gap-2 text-foreground/70">
@@ -601,10 +743,12 @@ export default function ProviderProfile() {
 
         <main className="max-w-6xl mx-auto px-4 py-8">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Main Content */}
-            <div className="lg:col-span-2 space-y-8">
+
+            {/* ── Main content ───────────────────────────────────────────────── */}
+            <div className="lg:col-span-2 space-y-10">
+
               {/* Hero */}
-              <div className="text-center sm:text-left">
+              <div>
                 <div className="flex flex-col sm:flex-row items-start gap-6 mb-6">
                   <img
                     src={provider.avatar || "/placeholder.svg"}
@@ -613,74 +757,49 @@ export default function ProviderProfile() {
                     onError={(e) => { e.target.src = "/placeholder.svg"; }}
                   />
                   <div className="flex-1">
-                    <h1 className="text-3xl font-bold text-foreground mb-2">{provider.name}</h1>
+                    <h1 className="text-3xl font-bold text-foreground mb-1">{provider.name}</h1>
                     <p className="text-blue-600 font-semibold mb-3">{provider.headline}</p>
                     <div className="flex items-center gap-4 flex-wrap text-sm text-foreground/70">
                       <div className="flex items-center gap-1">
-                        <MapPin className="w-4 h-4" />
-                        {provider.location}
+                        <MapPin className="w-4 h-4" /> {provider.location}
                       </div>
                       {provider.phone && (
                         <>
                           <span>•</span>
-                          <a href={`tel:${provider.phone}`} className="hover:text-blue-600">
-                            {provider.phone}
-                          </a>
+                          <a href={`tel:${provider.phone}`} className="hover:text-blue-600">{provider.phone}</a>
                         </>
                       )}
                     </div>
                     <div className="flex items-center gap-4 flex-wrap mt-2">
-                      <div className="flex items-center gap-1">
-                        {Array.from({ length: 5 }).map((_, i) => (
-                          <Star
-                            key={i}
-                            className={`w-5 h-5 ${i < Math.floor(provider.rating)
-                              ? "text-green-500 fill-green-500"
-                              : i < provider.rating
-                                ? "text-green-300 fill-green-300"
-                                : "text-foreground/30"
-                              }`}
-                          />
-                        ))}
-                        <span className="ml-2 font-bold">{provider.rating.toFixed(1)}</span>
+                      <div className="flex items-center gap-1.5">
+                        <StarDisplay rating={provider.rating} size="lg" />
+                        <span className="font-bold">{provider.rating.toFixed(1)}</span>
                         <span className="text-foreground/60">({provider.reviewsCount})</span>
                       </div>
-                      <span
-                        className={`px-3 py-1 rounded-full text-sm ${provider.availabilityStatus === "available"
-                          ? "bg-green-100 text-green-700"
-                          : provider.availabilityStatus === "busy"
-                            ? "bg-yellow-100 text-yellow-700"
-                            : "bg-gray-100 text-gray-700"
-                          }`}
-                      >
-                        {provider.availabilityStatus === "available"
-                          ? "● Available"
-                          : provider.availabilityStatus === "busy"
-                            ? "● Busy"
-                            : "○ Offline"}
+                      <span className={`px-3 py-1 rounded-full text-sm ${
+                        provider.availabilityStatus === "available" ? "bg-green-100 text-green-700"
+                        : provider.availabilityStatus === "busy" ? "bg-yellow-100 text-yellow-700"
+                        : "bg-gray-100 text-gray-700"
+                      }`}>
+                        {provider.availabilityStatus === "available" ? "● Available"
+                          : provider.availabilityStatus === "busy" ? "● Busy"
+                          : "○ Offline"}
                       </span>
                     </div>
                   </div>
                 </div>
 
                 <div className="flex gap-3 flex-wrap">
-                  <Button
-                    onClick={() => setShowBooking(true)}
-                    className="bg-gradient-to-r from-blue-600 to-green-500 text-white"
-                  >
+                  <Button onClick={() => setShowBooking(true)} className="bg-gradient-to-r from-blue-600 to-green-500 text-white">
                     Hire Now
                   </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => navigate(`/messages/new?to=${provider.id}`)}
-                  >
-                    <MessageSquare className="w-4 h-4 mr-2" />
-                    Message
+                  <Button variant="outline" onClick={() => navigate(`/messages/new?to=${provider.id}`)}>
+                    <MessageSquare className="w-4 h-4 mr-2" /> Message
                   </Button>
                 </div>
               </div>
 
-              {/* Info Cards */}
+              {/* Stat cards */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <Card className="p-4 text-center">
                   <p className="text-3xl font-bold text-green-600">Rs. {provider.rate}/hr</p>
@@ -713,9 +832,7 @@ export default function ProviderProfile() {
                 <section>
                   <h2 className="text-2xl font-bold mb-6">Skills</h2>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    {provider.skills.map((skill, idx) => (
-                      <SkillItem key={idx} skill={skill} />
-                    ))}
+                    {provider.skills.map((skill, idx) => <SkillItem key={idx} skill={skill} />)}
                   </div>
                 </section>
               )}
@@ -726,12 +843,8 @@ export default function ProviderProfile() {
                   <h2 className="text-2xl font-bold mb-4">Certifications</h2>
                   <div className="flex flex-wrap gap-3">
                     {provider.certifications.map((cert, idx) => (
-                      <span
-                        key={idx}
-                        className="px-4 py-2 bg-blue-100 text-blue-700 rounded-full text-sm"
-                      >
-                        <CheckCircle className="w-3.5 h-3.5 inline mr-1" />
-                        {cert}
+                      <span key={idx} className="px-4 py-2 bg-blue-100 text-blue-700 rounded-full text-sm">
+                        <CheckCircle className="w-3.5 h-3.5 inline mr-1" />{cert}
                       </span>
                     ))}
                   </div>
@@ -746,20 +859,32 @@ export default function ProviderProfile() {
                 </section>
               )}
 
-              {/* Reviews */}
-              {provider.reviews?.length > 0 && (
-                <section>
-                  <h2 className="text-2xl font-bold mb-6">Reviews</h2>
-                  <div className="space-y-4">
-                    {provider.reviews.slice(0, 3).map((review) => (
-                      <ReviewCard key={review.id} review={review} />
-                    ))}
-                  </div>
-                </section>
-              )}
+              {/* ── REVIEWS SECTION ─────────────────────────────────────────── */}
+              <section>
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-2xl font-bold">
+                    Reviews
+                    {provider.reviewsCount > 0 && (
+                      <span className="ml-2 text-base font-normal text-foreground/50">
+                        ({provider.reviewsCount})
+                      </span>
+                    )}
+                  </h2>
+                  {provider.rating > 0 && (
+                    <div className="flex items-center gap-1.5 text-sm text-foreground/70">
+                      <StarDisplay rating={provider.rating} />
+                      <span className="font-semibold text-foreground">{provider.rating.toFixed(1)}</span>
+                      <span>avg</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Live reviews from the Review API */}
+                <ReviewsSection providerId={provider._id || provider.id} />
+              </section>
             </div>
 
-            {/* Sidebar */}
+            {/* ── Sidebar ────────────────────────────────────────────────────── */}
             <aside className="lg:col-span-1">
               <Card className="sticky top-20 p-6">
                 <h3 className="text-lg font-bold mb-4">Quick Hire</h3>
@@ -782,19 +907,15 @@ export default function ProviderProfile() {
                 </Button>
 
                 <div className="p-3 bg-blue-50 rounded-lg border border-blue-200 text-xs text-blue-900 space-y-1">
-                  <p className="flex items-center gap-1">
-                    <CheckCircle className="w-3.5 h-3.5" /> Payment protected
-                  </p>
-                  <p className="flex items-center gap-1">
-                    <CheckCircle className="w-3.5 h-3.5" /> Cancel anytime
-                  </p>
+                  <p className="flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> Payment protected</p>
+                  <p className="flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5" /> Cancel anytime</p>
                 </div>
 
                 <div className="pt-4 border-t mt-4">
                   <h4 className="font-semibold text-sm mb-2">Service Areas</h4>
                   {provider.serviceAreas.length > 0 ? (
                     provider.serviceAreas.map((area, idx) => (
-                      <div key={idx} className="text-sm text-foreground/70 flex items-start gap-2">
+                      <div key={idx} className="text-sm text-foreground/70 flex items-start gap-2 mb-1">
                         <MapPin className="w-4 h-4 mt-0.5 text-orange-500" />
                         <span>{area.city} ({area.radius} km)</span>
                       </div>
@@ -805,6 +926,7 @@ export default function ProviderProfile() {
                 </div>
               </Card>
             </aside>
+
           </div>
         </main>
 

@@ -858,14 +858,219 @@ function JobChatPanel({ job, onClose }) {
   );
 }
 
+
+// ─── Star Rating Input ────────────────────────────────────────────────────────
+function StarInput({ value, onChange, size = 28 }) {
+  const [hovered, setHovered] = useState(0);
+  return (
+    <div style={{ display: "flex", gap: 2 }}>
+      {[1, 2, 3, 4, 5].map(s => (
+        <button key={s} onClick={() => onChange(s)}
+          onMouseEnter={() => setHovered(s)}
+          onMouseLeave={() => setHovered(0)}
+          style={{
+            fontSize: size, background: "none", border: "none", cursor: "pointer", padding: "0 2px",
+            color: s <= (hovered || value) ? "#F59E0B" : "#D1D5DB",
+            transform: s <= (hovered || value) ? "scale(1.2)" : "scale(1)",
+            transition: "color 0.1s, transform 0.1s",
+          }}>★</button>
+      ))}
+    </div>
+  );
+}
+
+// ─── Review Modal ─────────────────────────────────────────────────────────────
+// Calls POST /reviews with { jobId, rating, comment }
+// The backend infers direction (client→provider or provider→client) from the JWT.
+function ReviewModal({ job, onClose, onReviewed }) {
+  const [rating,  setRating]  = useState(0);
+  const [comment, setComment] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [err,     setErr]     = useState(null);
+  const [done,    setDone]    = useState(false);
+
+  const userRole     = getUserRole();
+  const isClientUser = userRole === "customer";
+
+  const subjectName   = isClientUser
+    ? (job.assignedWorker?.fullName || "the provider")
+    : (job.client?.fullName         || "the client");
+  const subjectAvatar = isClientUser
+    ? job.assignedWorker?.avatar
+    : job.client?.avatar;
+
+  const LABELS = ["", "Poor", "Fair", "Good", "Very Good", "Excellent"];
+
+  const handleSubmit = async () => {
+    if (rating === 0) return setErr("Please select a star rating.");
+    setLoading(true); setErr(null);
+    try {
+      const res = await fetch(`${API_BASE}/reviews`, {
+        method:  "POST",
+        headers: authHeaders(),
+        body:    JSON.stringify({ jobId: job._id, rating, comment: comment.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to submit review");
+      setDone(true);
+      toast(isClientUser ? "Provider reviewed! ⭐" : "Client reviewed! ⭐", "success");
+      // Short pause so user sees success state, then close + mark button gone
+      setTimeout(() => { onReviewed(); onClose(); }, 1400);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000,
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+    }}>
+      <div style={{
+        background: "#fff", borderRadius: 20, width: "100%", maxWidth: 440,
+        boxShadow: "0 24px 64px rgba(0,0,0,0.22)", overflow: "hidden",
+      }}>
+
+        {/* Header */}
+        <div style={{
+          background: "linear-gradient(135deg,#FFF7ED,#FFFBEB)",
+          padding: "1.25rem 1.5rem", borderBottom: "1px solid #FDE68A",
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+        }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: "#0F172A" }}>
+              {isClientUser ? "⭐ Review the Provider" : "⭐ Review the Client"}
+            </div>
+            <div style={{ fontSize: 12, color: "#78716C", marginTop: 2 }}>{job.title}</div>
+          </div>
+          {!done && (
+            <button onClick={onClose}
+              style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#94A3B8", lineHeight: 1 }}>×</button>
+          )}
+        </div>
+
+        <div style={{ padding: "1.5rem" }}>
+          {done ? (
+            <div style={{ textAlign: "center", padding: "1.75rem 0" }}>
+              <div style={{
+                width: 60, height: 60, borderRadius: "50%", background: "#FEF3C7",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 30, margin: "0 auto 14px",
+              }}>⭐</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: "#0F172A", marginBottom: 4 }}>
+                Review Submitted!
+              </div>
+              <div style={{ fontSize: 13, color: "#64748B" }}>Thank you for your feedback.</div>
+            </div>
+          ) : (
+            <>
+              {/* Who is being reviewed */}
+              <div style={{
+                display: "flex", alignItems: "center", gap: 12,
+                background: "#F8FAFC", borderRadius: 12, padding: "12px 14px", marginBottom: "1.25rem",
+              }}>
+                <Avatar src={subjectAvatar} name={subjectName} size={40}/>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#0F172A" }}>{subjectName}</div>
+                  <div style={{ fontSize: 11, color: "#94A3B8" }}>
+                    {isClientUser ? "Provider on this job" : "Client on this job"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Stars */}
+              <div style={{ marginBottom: "1.25rem" }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#475569", marginBottom: 8 }}>
+                  How would you rate your experience?
+                </div>
+                <StarInput value={rating} onChange={setRating}/>
+                {rating > 0 && (
+                  <div style={{ fontSize: 13, color: "#F59E0B", marginTop: 6, fontWeight: 600 }}>
+                    {LABELS[rating]}
+                  </div>
+                )}
+              </div>
+
+              {/* Comment */}
+              <div style={{ marginBottom: "1.25rem" }}>
+                <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#475569", marginBottom: 6 }}>
+                  Comment <span style={{ color: "#94A3B8", fontWeight: 400 }}>(optional)</span>
+                </label>
+                <textarea
+                  value={comment} onChange={e => setComment(e.target.value)}
+                  placeholder={
+                    isClientUser
+                      ? "Describe the quality of work, professionalism, punctuality…"
+                      : "Describe how well the client communicated, paid on time, etc…"
+                  }
+                  rows={3} maxLength={1000}
+                  style={{
+                    width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10,
+                    border: "1px solid #E2E8F0", fontSize: 13, resize: "vertical",
+                    fontFamily: "inherit", outline: "none", lineHeight: 1.5,
+                  }}
+                />
+                <div style={{ fontSize: 11, color: "#94A3B8", textAlign: "right", marginTop: 2 }}>
+                  {comment.length}/1000
+                </div>
+              </div>
+
+              {err && (
+                <div style={{
+                  fontSize: 13, color: "#DC2626", background: "#FEF2F2",
+                  padding: "8px 12px", borderRadius: 8, marginBottom: 12,
+                }}>{err}</div>
+              )}
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button onClick={onClose} disabled={loading}
+                  style={{
+                    flex: 1, padding: "11px", borderRadius: 10, border: "1px solid #E2E8F0",
+                    background: "#fff", color: "#64748B", fontSize: 13, fontWeight: 500, cursor: "pointer",
+                  }}>Cancel</button>
+                <button onClick={handleSubmit} disabled={loading || rating === 0}
+                  style={{
+                    flex: 2, padding: "11px", borderRadius: 10, border: "none",
+                    background: loading || rating === 0 ? "#CBD5E1" : "#F59E0B",
+                    color: "#fff", fontSize: 13, fontWeight: 700,
+                    cursor: loading || rating === 0 ? "not-allowed" : "pointer",
+                    transition: "background 0.15s",
+                  }}>
+                  {loading ? "Submitting…" : "Submit Review"}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── JobCard ──────────────────────────────────────────────────────────────────
 function JobCard({ job: initialJob, onJobUpdated, userRole }) {
   const [job, setJob]           = useState(initialJob);
   const [expanded, setExpanded] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
-  const [modal, setModal]       = useState(null); // "edit"|"fund_escrow"|"complete"|"cancel"
+  const [modal, setModal]       = useState(null); // "edit"|"fund_escrow"|"complete"|"cancel"|"review"
+  // reviewedByMe: null = unchecked, false = not yet reviewed, true = already reviewed
+  const [reviewedByMe, setReviewedByMe] = useState(null);
 
   useEffect(() => { setJob(initialJob); }, [initialJob]);
+
+  // Check if current user already reviewed this job (only for completed jobs)
+  useEffect(() => {
+    if (initialJob.status !== "completed") return;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/reviews/check/${initialJob._id}`, { headers: authHeaders() });
+        const data = await res.json();
+        if (res.ok) setReviewedByMe(data.reviewed);
+      } catch { /* non-critical — button shows by default */ }
+    })();
+  }, [initialJob._id, initialJob.status]);
 
   const handleJobChange = (updatedJob) => {
     const merged = { ...job, ...updatedJob };
@@ -884,11 +1089,16 @@ function JobCard({ job: initialJob, onJobUpdated, userRole }) {
   // Build action buttons from availableActions returned by backend
   const actions = (job.availableActions || []).filter(a => !(a === "fund_escrow" && job.escrow?.funded));
 
+  // Determine whether the Review button should appear.
+  // Shows when: job is completed AND the current user hasn't reviewed yet.
+  const showReviewBtn = job.status === "completed" && reviewedByMe === false;
+
   const ACTION_CONFIG = {
     fund_escrow:  { label:"🔒 Fund Escrow",  bg:"#1D4ED8", color:"#fff",    hover:"#1E40AF" },
     update:       { label:"✏️ Edit",          bg:"#fff",    color:"#475569", border:"#E2E8F0" },
-    complete_job: { label:" Complete",      bg:"#166534", color:"#fff",    hover:"#14532D" },
+    complete_job: { label:"✅ Complete",      bg:"#166534", color:"#fff",    hover:"#14532D" },
     cancel:       { label:"🚫 Cancel",        bg:"#fff",    color:"#DC2626", border:"#FECACA" },
+    // legacy action name from older backend — keep in sync
     submit_review:{ label:"⭐ Review",        bg:"#F59E0B", color:"#fff",    hover:"#D97706" },
   };
 
@@ -897,6 +1107,7 @@ function JobCard({ job: initialJob, onJobUpdated, userRole }) {
     if (action === "update")       return setModal("edit");
     if (action === "complete_job") return setModal("complete");
     if (action === "cancel")       return setModal("cancel");
+    if (action === "submit_review") return setModal("review");
   };
 
   return (
@@ -919,6 +1130,13 @@ function JobCard({ job: initialJob, onJobUpdated, userRole }) {
       )}
       {modal === "cancel" && (
         <CancelJobModal job={job} onClose={()=>setModal(null)} onCancelled={handleJobChange} />
+      )}
+      {modal === "review" && (
+        <ReviewModal
+          job={job}
+          onClose={() => setModal(null)}
+          onReviewed={() => setReviewedByMe(true)}
+        />
       )}
 
       <div style={{background:"#fff",borderRadius:16,border:"1px solid #E2E8F0",overflow:"hidden",
@@ -1027,6 +1245,24 @@ function JobCard({ job: initialJob, onJobUpdated, userRole }) {
                 </button>
               );
             })}
+
+            {/* Review button — shown when job completed and user hasn't reviewed yet */}
+            {showReviewBtn && (
+              <button onClick={() => setModal("review")}
+                style={{fontSize:12,fontWeight:600,padding:"5px 14px",borderRadius:8,
+                  background:"#F59E0B",color:"#fff",cursor:"pointer",border:"none",
+                  transition:"background 0.15s"}}>
+                ⭐ {getUserRole() === "customer" ? "Review Provider" : "Review Client"}
+              </button>
+            )}
+
+            {/* Badge when already reviewed */}
+            {reviewedByMe === true && job.status === "completed" && (
+              <span style={{fontSize:12,fontWeight:500,padding:"5px 10px",borderRadius:8,
+                background:"#F0FDF4",color:"#166534",border:"1px solid #BBF7D0"}}>
+                ✓ Reviewed
+              </span>
+            )}
           </div>
         </div>
 

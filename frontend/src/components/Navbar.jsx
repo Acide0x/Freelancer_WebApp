@@ -134,9 +134,11 @@ export default function Navbar() {
           ) : user ? (
             <>
               {/* Notification Bell */}
-              <button className="p-2 rounded-full hover:bg-secondary transition-colors" aria-label="Notifications">
-                <Bell className="w-5 h-5 text-muted-foreground" />
-              </button>
+              <Link to="/notifications">
+                <button className="p-2 rounded-full hover:bg-secondary transition-colors" aria-label="Notifications">
+                  <Bell className="w-5 h-5 text-muted-foreground" />
+                </button>
+              </Link>
 
               {/* Avatar Dropdown */}
               <DropdownMenu>
