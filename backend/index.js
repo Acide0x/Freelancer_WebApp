@@ -23,17 +23,6 @@ const server = http.createServer(app);
 // ============================================================================
 // ⚙️  MIDDLEWARE
 // ============================================================================
-//
-// ⚠️  ORDER MATTERS:
-//   The Stripe webhook needs the RAW request body for signature verification.
-//   express.raw() is applied ONLY to that one path inside payment.routes.js
-//   (via router.post("/webhook/stripe", express.raw(...), stripeWebhook)).
-//
-//   Do NOT mount paymentRoutes here with express.raw() — that caused the
-//   double-mount bug where every /payment/* route ran twice.
-//   Just let express.json() below handle everything except the webhook path,
-//   which opts out via express.raw() in the router itself.
-//
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(cookieParser());
@@ -44,6 +33,7 @@ app.use(cookieParser());
 const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:3000",
+  "https://freelancer-web-app.vercel.app",
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
@@ -88,18 +78,12 @@ app.use("/upload", uploadRoutes);
 app.use("/discussions", discussionRoutes);
 app.use("/comments", commentRoutes);
 app.use("/chat", chatRoutes);
-app.use("/payment", paymentRoutes); // single mount — webhook lives inside the router
+app.use("/payment", paymentRoutes);
 
 // ============================================================================
 // 🔌 SOCKET.IO
-// Initialize AFTER routes so all models are already required and registered.
-// initSocket() also exports emit() — any controller can now do:
-//   const { emit } = require("./socket/server");
-//   emit("user:abc", "unread:increment", { conversationId });
 // ============================================================================
 const io = initSocket(server);
-
-// Make io available on req via app.get("io") if ever needed in middleware
 app.set("io", io);
 
 // ============================================================================
