@@ -27,12 +27,10 @@ import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 
 // Context & Utils
-import { AppProvider } from './context/AppContext';
 import { Toaster } from 'sonner';
 
 export default function App() {
   return (
-    <AppProvider>
       <BrowserRouter
         future={{
           v7_startTransition: true,
@@ -80,6 +78,5 @@ export default function App() {
         <Footer />
         <Toaster position="bottom-center" richColors />
       </BrowserRouter>
-    </AppProvider>
   );
 }
