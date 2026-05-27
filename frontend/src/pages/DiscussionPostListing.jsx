@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom' // ✅ Added for navigation
+import { useNavigate } from 'react-router-dom' //  Added for navigation
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -29,14 +29,14 @@ import {
 import api from '../api/api'
 import { toast } from 'sonner'
 
-// ✅ Cloudinary Config (Frontend - Unsigned Preset Only)
+//  Cloudinary Config (Frontend - Unsigned Preset Only)
 const CLOUDINARY_CONFIG = {
   cloudName: import.meta.env.VITE_CLOUDINARY_CLOUD_NAME,
   uploadPreset: import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET,
   uploadUrl: `https://api.cloudinary.com/v1_1/${import.meta.env.VITE_CLOUDINARY_CLOUD_NAME}/image/upload`,
 }
 
-// ✅ Upload single image to Cloudinary (unsigned)
+//  Upload single image to Cloudinary (unsigned)
 const uploadImageToCloudinary = async (file, onProgress) => {
   if (!CLOUDINARY_CONFIG.cloudName || CLOUDINARY_CONFIG.cloudName === 'undefined') {
     throw new Error('Cloudinary cloud name not configured. Check your .env file.')
@@ -94,7 +94,7 @@ const ALL_TAGS = [
   'startup', 'frontend', 'career', 'transition', 'advice',
 ]
 
-// ✅ BULLETPROOF: Normalize discussion data from API
+//  BULLETPROOF: Normalize discussion data from API
 const normalizeDiscussion = (disc) => {
   if (!disc) return null
 
@@ -166,7 +166,7 @@ const formatDate = (dateString) => {
   return 'now'
 }
 
-// ✅ OPTIMIZED: Cloudinary URL helper
+//  OPTIMIZED: Cloudinary URL helper
 const getOptimizedImageUrl = (url, width = 800, height = 600) => {
   if (!url || typeof url !== 'string') return ''
   if (url.includes('upload/') && (url.includes('w=') || url.includes('width='))) return url
@@ -177,7 +177,7 @@ const getOptimizedImageUrl = (url, width = 800, height = 600) => {
   return url
 }
 
-// Grid Card Component - ✅ CLICKABLE
+// Grid Card Component -  CLICKABLE
 function DiscussionCard({ discussion, onImageClick, onNavigate }) {
   if (!discussion?._id) return null
 
@@ -186,7 +186,7 @@ function DiscussionCard({ discussion, onImageClick, onNavigate }) {
   const [isLiking, setIsLiking] = useState(false)
 
   const handleLike = async (e) => {
-    e.stopPropagation() // ✅ Prevent card navigation when liking
+    e.stopPropagation() //  Prevent card navigation when liking
     if (isLiking) return
     setIsLiking(true)
     const previousLiked = isLiked
@@ -212,12 +212,12 @@ function DiscussionCard({ discussion, onImageClick, onNavigate }) {
   }
 
   const handleImageClickWrapper = (e, images, index) => {
-    e.stopPropagation() // ✅ Prevent card navigation when clicking image
+    e.stopPropagation() //  Prevent card navigation when clicking image
     if (onImageClick) onImageClick(images, index)
   }
 
   return (
-    <article 
+    <article
       onClick={handleCardClick}
       className="group bg-card border border-border hover:border-primary/50 rounded-lg overflow-hidden transition-all duration-200 hover:shadow-md flex flex-col h-full cursor-pointer"
     >
@@ -241,37 +241,37 @@ function DiscussionCard({ discussion, onImageClick, onNavigate }) {
         {discussion.images?.length > 0 && (
           <div className="mb-3 grid gap-2">
             {discussion.images.length === 1 ? (
-              <button 
-                onClick={(e) => handleImageClickWrapper(e, discussion.images, 0)} 
+              <button
+                onClick={(e) => handleImageClickWrapper(e, discussion.images, 0)}
                 className="relative group/img overflow-hidden rounded-md h-48 bg-muted hover:opacity-90 transition-opacity"
               >
                 <img src={getOptimizedImageUrl(discussion.images[0], 800, 600)} alt="Post content" className="w-full h-full object-cover" loading="lazy" onError={(e) => { e.currentTarget.src = 'https://via.placeholder.com/800x600?text=Image+unavailable'; e.currentTarget.onerror = null }} />
-                <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-colors flex items-center justify-center"><svg className="w-5 h-5 text-white opacity-0 group-hover/img:opacity-100 transition-opacity" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></div>
+                <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-colors flex items-center justify-center"><svg className="w-5 h-5 text-white opacity-0 group-hover/img:opacity-100 transition-opacity" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" /></svg></div>
               </button>
             ) : discussion.images.length === 2 ? (
               <div className="grid grid-cols-2 gap-2">
                 {discussion.images.map((img, idx) => (
-                  <button 
-                    key={idx} 
-                    onClick={(e) => handleImageClickWrapper(e, discussion.images, idx)} 
+                  <button
+                    key={idx}
+                    onClick={(e) => handleImageClickWrapper(e, discussion.images, idx)}
                     className="relative group/img overflow-hidden rounded-md h-24 bg-muted hover:opacity-90 transition-opacity"
                   >
                     <img src={getOptimizedImageUrl(img, 400, 300)} alt={`Post content ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" onError={(e) => { e.currentTarget.src = 'https://via.placeholder.com/400x300?text=Image+unavailable'; e.currentTarget.onerror = null }} />
-                    <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-colors flex items-center justify-center"><svg className="w-4 h-4 text-white opacity-0 group-hover/img:opacity-100 transition-opacity" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></div>
+                    <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-colors flex items-center justify-center"><svg className="w-4 h-4 text-white opacity-0 group-hover/img:opacity-100 transition-opacity" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" /></svg></div>
                   </button>
                 ))}
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-2">
                 {discussion.images.map((img, idx) => (
-                  <button 
-                    key={idx} 
-                    onClick={(e) => handleImageClickWrapper(e, discussion.images, idx)} 
+                  <button
+                    key={idx}
+                    onClick={(e) => handleImageClickWrapper(e, discussion.images, idx)}
                     className="relative group/img overflow-hidden rounded-md h-20 bg-muted hover:opacity-90 transition-opacity"
                   >
                     <img src={getOptimizedImageUrl(img, 300, 200)} alt={`Post content ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" onError={(e) => { e.currentTarget.src = 'https://via.placeholder.com/300x200?text=Image+unavailable'; e.currentTarget.onerror = null }} />
                     {idx === 2 && discussion.images.length > 3 && <div className="absolute inset-0 bg-black/40 flex items-center justify-center"><span className="text-white font-semibold text-sm">+{discussion.images.length - 3}</span></div>}
-                    <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-colors flex items-center justify-center"><svg className="w-3 h-3 text-white opacity-0 group-hover/img:opacity-100 transition-opacity" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></div>
+                    <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-colors flex items-center justify-center"><svg className="w-3 h-3 text-white opacity-0 group-hover/img:opacity-100 transition-opacity" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" /></svg></div>
                   </button>
                 ))}
               </div>
@@ -300,7 +300,7 @@ function DiscussionCard({ discussion, onImageClick, onNavigate }) {
   )
 }
 
-// List Item Component - ✅ CLICKABLE
+// List Item Component -  CLICKABLE
 function DiscussionListItem({ discussion, onImageClick, onNavigate }) {
   if (!discussion?._id) return null
 
@@ -309,7 +309,7 @@ function DiscussionListItem({ discussion, onImageClick, onNavigate }) {
   const [isLiking, setIsLiking] = useState(false)
 
   const handleLike = async (e) => {
-    e.stopPropagation() // ✅ Prevent card navigation when liking
+    e.stopPropagation() //  Prevent card navigation when liking
     e.preventDefault()
     if (isLiking) return
     setIsLiking(true)
@@ -336,12 +336,12 @@ function DiscussionListItem({ discussion, onImageClick, onNavigate }) {
   }
 
   const handleImageClickWrapper = (e, images, index) => {
-    e.stopPropagation() // ✅ Prevent card navigation when clicking image
+    e.stopPropagation() //  Prevent card navigation when clicking image
     if (onImageClick) onImageClick(images, index)
   }
 
   return (
-    <article 
+    <article
       onClick={handleCardClick}
       className="group bg-card border border-border hover:border-primary/50 rounded-lg overflow-hidden transition-all duration-200 hover:shadow-md p-4 cursor-pointer"
     >
@@ -370,14 +370,14 @@ function DiscussionListItem({ discussion, onImageClick, onNavigate }) {
         {discussion.images?.length > 0 && (
           <div className="flex gap-2 ml-12">
             {discussion.images.slice(0, 3).map((img, idx) => (
-              <button 
-                key={idx} 
-                onClick={(e) => handleImageClickWrapper(e, discussion.images, idx)} 
+              <button
+                key={idx}
+                onClick={(e) => handleImageClickWrapper(e, discussion.images, idx)}
                 className="relative group/img overflow-hidden rounded-md w-20 h-20 bg-muted hover:opacity-90 transition-opacity flex-shrink-0"
               >
                 <img src={getOptimizedImageUrl(img, 200, 200)} alt={`Post content ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" onError={(e) => { e.currentTarget.src = 'https://via.placeholder.com/200x200?text=Image+unavailable'; e.currentTarget.onerror = null }} />
                 {idx === 2 && discussion.images.length > 3 && <div className="absolute inset-0 bg-black/40 flex items-center justify-center"><span className="text-white font-semibold text-xs">+{discussion.images.length - 3}</span></div>}
-                <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-colors flex items-center justify-center"><svg className="w-3 h-3 text-white opacity-0 group-hover/img:opacity-100 transition-opacity" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></div>
+                <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/20 transition-colors flex items-center justify-center"><svg className="w-3 h-3 text-white opacity-0 group-hover/img:opacity-100 transition-opacity" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" /></svg></div>
               </button>
             ))}
           </div>
@@ -464,7 +464,7 @@ function ForumFilters({ selectedCategory, onCategoryChange, selectedTags, onTags
   )
 }
 
-// ✅ Add Post Modal
+//  Add Post Modal
 function AddPostModal({ isOpen, onClose, onPostCreated, categories, allTags }) {
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
@@ -690,9 +690,9 @@ function AddPostModal({ isOpen, onClose, onPostCreated, categories, allTags }) {
   )
 }
 
-// ✅ Main Page Component
+//  Main Page Component
 export default function DiscussionForum() {
-  const navigate = useNavigate() // ✅ Initialize navigate hook
+  const navigate = useNavigate() //  Initialize navigate hook
   const [discussions, setDiscussions] = useState([])
   const [loading, setLoading] = useState(true)
   const [viewMode, setViewMode] = useState('grid')
@@ -750,8 +750,9 @@ export default function DiscussionForum() {
     setPagination(prev => ({ ...prev, total: (prev.total || 0) + 1 }))
   }
 
-  // ✅ Navigate to discussion detail page
+  //  Navigate to discussion detail page
   const handleNavigateToDiscussion = (discussionId) => {
+    console.log('Navigating to:', discussionId)
     navigate(`/discussions/${discussionId}`)
   }
 
@@ -818,22 +819,22 @@ export default function DiscussionForum() {
             ) : viewMode === 'grid' ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {sortedDiscussions.map((discussion) => discussion?._id && (
-                  <DiscussionCard 
-                    key={discussion._id} 
-                    discussion={discussion} 
-                    onImageClick={handleImageClick} 
-                    onNavigate={handleNavigateToDiscussion} // ✅ Pass navigation handler
+                  <DiscussionCard
+                    key={discussion._id}
+                    discussion={discussion}
+                    onImageClick={handleImageClick}
+                    onNavigate={handleNavigateToDiscussion} //  Pass navigation handler
                   />
                 ))}
               </div>
             ) : (
               <div className="space-y-3">
                 {sortedDiscussions.map((discussion) => discussion?._id && (
-                  <DiscussionListItem 
-                    key={discussion._id} 
-                    discussion={discussion} 
+                  <DiscussionListItem
+                    key={discussion._id}
+                    discussion={discussion}
                     onImageClick={handleImageClick}
-                    onNavigate={handleNavigateToDiscussion} // ✅ Pass navigation handler
+                    onNavigate={handleNavigateToDiscussion} //  Pass navigation handler
                   />
                 ))}
               </div>

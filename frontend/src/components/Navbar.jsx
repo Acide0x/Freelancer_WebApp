@@ -10,7 +10,7 @@ import {
   Settings,
   MessageSquare,
   Briefcase,
-  ClipboardList, // ✅ New icon for Active Jobs
+  ClipboardList, //  New icon for Active Jobs
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -194,7 +194,7 @@ export default function Navbar() {
                     </DropdownMenuItem>
                   )}
 
-                  {/* 🔹 ✅ ACTIVE JOBS - For BOTH Provider AND Client (NEW) */}
+                  {/* 🔹  ACTIVE JOBS - For BOTH Provider AND Client (NEW) */}
                   {(user.role === "provider" || user.role === "customer") && (
                     <DropdownMenuItem asChild>
                       <Link 
@@ -310,7 +310,7 @@ export default function Navbar() {
                     </Link>
                   )}
 
-                  {/* 🔹 ✅ ACTIVE JOBS - For BOTH Provider AND Client (Mobile) - NEW */}
+                  {/* 🔹  ACTIVE JOBS - For BOTH Provider AND Client (Mobile) - NEW */}
                   {(user.role === "provider" || user.role === "customer") && (
                     <Link 
                       to="/jobs/active" 

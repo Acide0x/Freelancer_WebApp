@@ -416,7 +416,7 @@ exports.stripeWebhook = async (req, res) => {
       );
 
       await mongoSession.commitTransaction();
-      console.log(`✅ Wallet credited Rs ${paisaToRs(creditAmount)} for user ${userId}`);
+      console.log(` Wallet credited Rs ${paisaToRs(creditAmount)} for user ${userId}`);
     } catch (err) {
       await mongoSession.abortTransaction();
       console.error("❌ stripeWebhook credit failed:", err);
@@ -653,7 +653,7 @@ exports.escrowStatus = async (req, res) => {
 };
 
 // ============================================================================
-// ✅ ESCROW RELEASE (Admin → Provider)
+//  ESCROW RELEASE (Admin → Provider)
 // ============================================================================
 
 exports.releaseEscrow = async (req, res) => {

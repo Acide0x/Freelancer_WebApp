@@ -336,7 +336,7 @@ userSchema.index({ "providerDetails.isVerified": 1 });
 userSchema.index({ "ratings.average": -1 });
 userSchema.index({ kycVerified: 1 });
 userSchema.index({ deletedAt: 1 });
-userSchema.index({ activeJobs: 1 }); // ✅ NEW: Index for activeJobs queries
+userSchema.index({ activeJobs: 1 }); //  NEW: Index for activeJobs queries
 
 /* ================= VIRTUALS ================= */
 // Virtual: Count of active jobs (for quick frontend display)
@@ -362,7 +362,7 @@ const sanitizeOutput = (ret) => {
 
 userSchema.set("toJSON", {
   transform: (_, ret) => sanitizeOutput(ret),
-  virtuals: true, // ✅ Include virtuals like activeJobsCount
+  virtuals: true, //  Include virtuals like activeJobsCount
 });
 
 userSchema.set("toObject", {
@@ -397,7 +397,7 @@ userSchema.methods.getProviderSummary = function() {
     rate: pd.rate,
     availability: this.providerDetails?.availabilityStatus,
     isVerified: pd.isVerified,
-    activeJobsCount: this.activeJobsCount, // ✅ Now included
+    activeJobsCount: this.activeJobsCount, //  Now included
     location: this.location?.address
   };
 };
@@ -444,7 +444,7 @@ userSchema.statics.findAvailableProviders = async function({
         "providerDetails.isVerified": 1,
         ratings: 1,
         location: 1,
-        activeJobsCount: { $size: "$activeJobs" } // ✅ Include active jobs count
+        activeJobsCount: { $size: "$activeJobs" } //  Include active jobs count
       }
     }
   ];

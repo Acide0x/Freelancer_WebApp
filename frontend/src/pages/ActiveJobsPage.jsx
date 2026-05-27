@@ -400,7 +400,7 @@ function FundEscrowModal({ job, onClose, onFunded }) {
           <h2 style={{margin:0,fontSize:17,fontWeight:700,color:"#0F172A"}}>
             {phase==="stripe"   ? "💳 Complete Payment"    :
              phase==="polling"  ? "⏳ Confirming…"          :
-             phase==="success"  ? "✅ Escrow Funded"        : "🔒 Fund Escrow"}
+             phase==="success"  ? " Escrow Funded"        : "🔒 Fund Escrow"}
           </h2>
           {phase !== "polling" && phase !== "success" && (
             <button onClick={onClose} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#94A3B8"}}>×</button>
@@ -451,7 +451,7 @@ function FundEscrowModal({ job, onClose, onFunded }) {
                   <>
                     <div style={{background:"#F0FDF4",borderRadius:10,padding:"10px 14px",
                       fontSize:13,color:"#166534",marginBottom:14}}>
-                      ✅ Your wallet has sufficient funds.
+                       Your wallet has sufficient funds.
                     </div>
                     <button onClick={handleFundDirect} disabled={fundLoading}
                       style={{width:"100%",padding:"13px",borderRadius:10,border:"none",
@@ -606,7 +606,7 @@ function CompleteJobModal({ job, userRole, onClose, onCompleted }) {
 
   return (
     <ConfirmModal
-      title="✅ Complete Job"
+      title=" Complete Job"
       message={`Are you sure you want to mark "${job.title}" as complete?${job.escrow?.funded ? " The admin will release the escrow payment to the provider." : ""}`}
       confirmLabel="Mark Complete"
       confirmColor="#166534"
@@ -887,7 +887,7 @@ function JobCard({ job: initialJob, onJobUpdated, userRole }) {
   const ACTION_CONFIG = {
     fund_escrow:  { label:"🔒 Fund Escrow",  bg:"#1D4ED8", color:"#fff",    hover:"#1E40AF" },
     update:       { label:"✏️ Edit",          bg:"#fff",    color:"#475569", border:"#E2E8F0" },
-    complete_job: { label:"✅ Complete",      bg:"#166534", color:"#fff",    hover:"#14532D" },
+    complete_job: { label:" Complete",      bg:"#166534", color:"#fff",    hover:"#14532D" },
     cancel:       { label:"🚫 Cancel",        bg:"#fff",    color:"#DC2626", border:"#FECACA" },
     submit_review:{ label:"⭐ Review",        bg:"#F59E0B", color:"#fff",    hover:"#D97706" },
   };

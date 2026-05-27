@@ -104,7 +104,7 @@ discussionSchema.index({ tags: 1 });
 discussionSchema.index({ category: 1, createdAt: -1 });
 discussionSchema.index({ viewCount: -1 });
 discussionSchema.index({ isPinned: -1, createdAt: -1 });
-// ✅ Index for image queries if needed in future
+//  Index for image queries if needed in future
 discussionSchema.index({ images: 1 });
 
 /* ================= VIRTUALS ================= */
@@ -171,7 +171,7 @@ discussionSchema.statics.getDiscussions = async function ({
   const query = { isDeleted: { $ne: true } };
 
   if (category) query.category = category;
-  if (tag) query.tags = { $in: [tag] }; // ✅ Use $in for array field
+  if (tag) query.tags = { $in: [tag] }; //  Use $in for array field
   if (author) query.author = author;
   
   if (search) {
@@ -185,7 +185,7 @@ discussionSchema.statics.getDiscussions = async function ({
     newest: { createdAt: -1 },
     oldest: { createdAt: 1 },
     popular: { viewCount: -1 },
-    liked: { likeCount: -1 }, // ✅ Sort by virtual likeCount
+    liked: { likeCount: -1 }, //  Sort by virtual likeCount
     commented: { commentCount: -1 },
     pinned: { isPinned: -1, createdAt: -1 },
   };
@@ -199,7 +199,7 @@ discussionSchema.statics.getDiscussions = async function ({
     .limit(limit)
     .lean();
 
-  // ✅ Add isLiked and clean up likes array for frontend
+  //  Add isLiked and clean up likes array for frontend
   if (userId) {
     discussions.forEach((disc) => {
       disc.isLiked = disc.likes?.some(id => 
@@ -229,7 +229,7 @@ discussionSchema.statics.getDiscussions = async function ({
 
 /* ================= OUTPUT SANITIZATION ================= */
 const sanitizeOutput = (ret) => {
-  // ✅ Keep images, remove sensitive/internal fields only
+  //  Keep images, remove sensitive/internal fields only
   delete ret.likes;
   delete ret._isLikedByUser;
   delete ret.__v;

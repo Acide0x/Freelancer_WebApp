@@ -866,7 +866,7 @@ exports.respondToJobOffer = async (req, res) => {
         console.warn("⚠️ WebSocket notification failed (non-critical):", socketErr.message);
       }
 
-      console.log(`✅ Provider ${providerId} accepted job ${jobId} → in_progress, isLive = true`);
+      console.log(` Provider ${providerId} accepted job ${jobId} → in_progress, isLive = true`);
       console.log(`🔔 Notify client ${job.client._id}`);
 
       return res.status(200).json({
@@ -1151,7 +1151,7 @@ exports.completeJob = async (req, res) => {
       console.warn("⚠️ WebSocket notification failed (non-critical):", socketErr.message);
     }
 
-    console.log(`✅ Job ${jobId} completed → isLive = false | escrow.releasedAt set for admin payout`);
+    console.log(` Job ${jobId} completed → isLive = false | escrow.releasedAt set for admin payout`);
 
     return res.status(200).json({
       success: true,

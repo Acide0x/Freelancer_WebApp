@@ -14,7 +14,7 @@ if (!MONGODB_URI) {
 
 mongoose.connect(MONGODB_URI)
   .then(async () => {
-    console.log("✅ Connected to MongoDB");
+    console.log(" Connected to MongoDB");
     
     const result = await User.updateMany(
       { 
@@ -27,7 +27,7 @@ mongoose.connect(MONGODB_URI)
       { $set: { reviews: [] } }
     );
     
-    console.log(`✅ Migration complete: Fixed ${result.modifiedCount} documents`);
+    console.log(` Migration complete: Fixed ${result.modifiedCount} documents`);
     console.log(`📊 Matched ${result.matchedCount} documents total`);
     
     await mongoose.disconnect();

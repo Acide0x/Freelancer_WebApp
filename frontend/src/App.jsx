@@ -46,8 +46,7 @@ export default function App() {
 
             {/* Job Routes */}
             <Route path="/jobs" element={<JobsPage />} />
-            {/* ⚠️ Static segments MUST come before /:id — React Router matches top-down */}
-            // App.jsx — replace the two active routes with one
+            {/* Static segments MUST come before /:id — React Router matches top-down */}
             <Route path="/jobs/active" element={<ActiveJobsPage />} />
             <Route path="/jobs/:id" element={<JobDetailPage />} />
             {/* <Route path="/jobs/:id/chat" element={<JobChatPage />} /> */}

@@ -16,8 +16,8 @@ const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
 if (!MONGODB_URI) {
   console.error("❌ ERROR: MONGODB_URI not found in environment variables!");
   console.error("\n📋 Current environment variables:");
-  console.error("   MONGODB_URI:", process.env.MONGODB_URI ? "✅ Set" : "❌ Missing");
-  console.error("   MONGO_URI:", process.env.MONGO_URI ? "✅ Set" : "❌ Missing");
+  console.error("   MONGODB_URI:", process.env.MONGODB_URI ? " Set" : "❌ Missing");
+  console.error("   MONGO_URI:", process.env.MONGO_URI ? " Set" : "❌ Missing");
   console.error("\n💡 Please ensure your .env file (in backend/) contains:");
   console.error("   MONGODB_URI=mongodb://localhost:27017/freelancer_app");
   console.error("\n🔍 .env file location being checked:");
@@ -35,10 +35,10 @@ const migrate = async () => {
     console.log("🔌 Connecting to MongoDB...");
     console.log("   URI:", MONGODB_URI.replace(/:\/\/[^:]+:[^@]+@/, "://***:***@")); // Hide credentials in logs
     
-    // ✅ Mongoose 6+: No need for useNewUrlParser/useUnifiedTopology
+    //  Mongoose 6+: No need for useNewUrlParser/useUnifiedTopology
     conn = await mongoose.connect(MONGODB_URI);
     
-    console.log("✅ Connected to MongoDB");
+    console.log(" Connected to MongoDB");
     console.log("   Database:", conn.connection.name);
 
     console.log("\n🔄 Starting activeJobs migration...");
@@ -66,7 +66,7 @@ const migrate = async () => {
             { $addToSet: { activeJobs: { $each: activeJobIds } } }
           );
           
-          console.log(`✅ ${provider.fullName}: Linked ${activeJobIds.length} active job(s)`);
+          console.log(` ${provider.fullName}: Linked ${activeJobIds.length} active job(s)`);
           updatedCount++;
         }
       } catch (err) {

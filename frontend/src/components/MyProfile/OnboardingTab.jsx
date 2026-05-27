@@ -320,7 +320,7 @@ export default function OnboardingTab({
             <CheckCircle2 className="w-10 h-10 text-green-600" />
           </div>
           <h2 className="text-3xl font-black mb-4 italic tracking-tighter uppercase">
-            Profile Approved ✅
+            Profile Approved 
           </h2>
           <p className="text-gray-500 max-w-md mx-auto font-medium">
             Your provider profile is live! Below is your current public profile.
@@ -716,7 +716,7 @@ export default function OnboardingTab({
                     <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                     <Input
                       type="number"
-                      value={data.rate} // ✅ Correct: uses 'rate' from schema
+                      value={data.rate} //  Correct: uses 'rate' from schema
                       onChange={(e) => !isReadOnly && updateLocalData({ rate: Number(e.target.value) })}
                       className="pl-9 bg-gray-100 border-none h-12 text-xl font-black rounded-xl"
                       disabled={isReadOnly}
@@ -998,10 +998,10 @@ export default function OnboardingTab({
                                 const filesToUpload = files.slice(0, remainingSlots);
                                 toast.message(`Uploading ${filesToUpload.length} image(s)...`);
 
-                                // ✅ Start upload WITHOUT async/await in onChange (which is not async)
+                                //  Start upload WITHOUT async/await in onChange (which is not async)
                                 Promise.all(
                                   filesToUpload.map((file) =>
-                                    uploadImage(file).then((url) => url.trim()) // ✅ trim after upload
+                                    uploadImage(file).then((url) => url.trim()) //  trim after upload
                                   )
                                 )
                                   .then((uploadedUrls) => {
@@ -1193,7 +1193,7 @@ export default function OnboardingTab({
                   <div className="grid md:grid-cols-3 gap-4">
                     <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
                       <p className="text-[8px] font-black text-gray-400 uppercase">Hourly Rate</p>
-                      <p className="text-lg font-black">${data.rate}/hr</p> {/* ✅ Uses 'rate' */}
+                      <p className="text-lg font-black">${data.rate}/hr</p> {/*  Uses 'rate' */}
                     </div>
                     <div className="p-4 bg-gray-50 border border-gray-200 rounded-xl">
                       <p className="text-[8px] font-black text-gray-400 uppercase">Call-out</p>

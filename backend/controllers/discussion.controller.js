@@ -21,7 +21,7 @@ exports.createDiscussion = async (req, res) => {
       content: content.trim(),
       category,
       tags: Array.isArray(tags) ? tags.map(t => t.toLowerCase().trim()).filter(Boolean) : [],
-      images: Array.isArray(images) ? images.filter(url => url?.trim()) : [], // ✅ Store validated Cloudinary URLs
+      images: Array.isArray(images) ? images.filter(url => url?.trim()) : [], //  Store validated Cloudinary URLs
       author: req.user._id,
     });
 
@@ -30,10 +30,10 @@ exports.createDiscussion = async (req, res) => {
       .populate("author", "fullName avatar username name profilePicture role providerDetails.headline")
       .lean();
 
-    // ✅ Format response with consistent key name for frontend
+    //  Format response with consistent key name for frontend
     res.status(201).json({ 
       success: true, 
-      discussion: populated, // ✅ Key matches frontend extraction: response.data.discussion
+      discussion: populated, //  Key matches frontend extraction: response.data.discussion
       message: 'Discussion created successfully'
     });
   } catch (error) {
@@ -63,7 +63,7 @@ exports.getDiscussions = async (req, res) => {
       userId: req.user?._id, // For isLiked calculation
     });
 
-    // ✅ Ensure response structure is consistent and frontend-ready
+    //  Ensure response structure is consistent and frontend-ready
     res.json({ 
       success: true, 
       discussions: result.discussions || [],
@@ -103,20 +103,20 @@ exports.getDiscussion = async (req, res) => {
       $inc: { viewCount: 1 } 
     }).catch(err => console.error('View increment failed:', err));
 
-    // ✅ Set isLiked for authenticated users (ObjectId comparison safe)
+    //  Set isLiked for authenticated users (ObjectId comparison safe)
     if (req.user?._id) {
       discussion.isLiked = discussion.likes?.some(id => 
         id?.toString() === req.user._id?.toString()
       ) || false;
     }
 
-    // ✅ Clean up internal fields before sending
+    //  Clean up internal fields before sending
     delete discussion.likes;
     delete discussion.__v;
 
     res.json({ 
       success: true, 
-      discussion // ✅ Consistent key name for frontend
+      discussion //  Consistent key name for frontend
     });
   } catch (error) {
     console.error('Get discussion error:', error);
@@ -208,7 +208,7 @@ exports.updateDiscussion = async (req, res) => {
       discussion.tags = tags.map(t => t.toLowerCase().trim()).filter(Boolean);
     }
     if (Array.isArray(images)) {
-      // ✅ Update images: filter valid URLs only
+      //  Update images: filter valid URLs only
       discussion.images = images.filter(url => url?.trim() && /^https?:\/\//.test(url));
     }
     if (typeof isClosed === 'boolean') discussion.isClosed = isClosed;

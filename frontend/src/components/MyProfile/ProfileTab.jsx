@@ -10,14 +10,14 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Edit2, X, Check, Upload, Loader2, LogOut } from "lucide-react";
 import api from "@/api/api";
 
-// ✅ Cloudinary Config (Frontend - Unsigned Preset)
+//  Cloudinary Config (Frontend - Unsigned Preset)
 const CLOUDINARY_CONFIG = {
   cloudName: import.meta.env.VITE_CLOUDINARY_CLOUD_NAME,
   uploadPreset: import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET,
   uploadUrl: `https://api.cloudinary.com/v1_1/${import.meta.env.VITE_CLOUDINARY_CLOUD_NAME}/image/upload`,
 };
 
-// ✅ Upload avatar to Cloudinary (unsigned, frontend)
+//  Upload avatar to Cloudinary (unsigned, frontend)
 const uploadAvatarToCloudinary = async (file, onProgress) => {
   if (!CLOUDINARY_CONFIG.cloudName || CLOUDINARY_CONFIG.cloudName === 'undefined') {
     throw new Error('Cloudinary cloud name not configured. Check your .env file.');
@@ -122,7 +122,7 @@ export default function ProfileTab({ profile: initialProfile, onUpdateProfile, o
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  // ✅ UPDATED: Frontend Cloudinary avatar upload
+  //  UPDATED: Frontend Cloudinary avatar upload
   const handleAvatarUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -261,7 +261,7 @@ export default function ProfileTab({ profile: initialProfile, onUpdateProfile, o
     };
   };
 
-  // ✅ Safe fallback for avatar initial
+  //  Safe fallback for avatar initial
   const getInitials = (name) => {
     if (!name) return "U";
     return name.charAt(0).toUpperCase();
@@ -299,7 +299,7 @@ export default function ProfileTab({ profile: initialProfile, onUpdateProfile, o
             </label>
           )}
           
-          {/* ✅ Upload Progress Overlay */}
+          {/*  Upload Progress Overlay */}
           {isUploadingAvatar && uploadProgress > 0 && uploadProgress < 100 && (
             <div className="absolute inset-0 bg-black/60 rounded-full flex flex-col items-center justify-center">
               <span className="text-white text-xs font-medium mb-1">{uploadProgress}%</span>

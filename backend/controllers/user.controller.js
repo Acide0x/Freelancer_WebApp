@@ -1238,7 +1238,7 @@ exports.getProviderById = async (req, res) => {
     // 🧹 Format output with maximum safety
     const formattedProvider = formatProviderProfile(provider, isOwner);
 
-    console.log(`✅ [DEBUG] Successfully fetched provider: ${provider._id}`);
+    console.log(` [DEBUG] Successfully fetched provider: ${provider._id}`);
 
     res.status(200).json({
       success: true,
