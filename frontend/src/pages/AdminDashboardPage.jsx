@@ -1,603 +1,1133 @@
-// src/pages/admin/AdminDashboardClient.jsx
-import { useState, useEffect } from "react";
-import { Badge } from "@/components/ui/badge";
+import React, { useState, useMemo, useEffect } from 'react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import {
-  Search,
-  Grid3x3,
-  List,
-  Check,
-  X,
-  Edit2,
-  Eye,
-  Lock,
-  Loader2,
-} from "lucide-react";
-import { toast } from "sonner";
-import api from "@/api/api";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { LayoutGrid, List, Plus, Trash2, Edit2, RotateCcw, Pin } from 'lucide-react';
+import { toast } from 'sonner';
 
-const getStatusColor = (status) => {
-  switch (status) {
-    case "approved":
-      return "bg-emerald-500/20 text-emerald-600 border-emerald-500/30";
-    case "rejected":
-      return "bg-red-500/20 text-red-600 border-red-500/30";
-    default:
-      return "bg-amber-500/20 text-amber-600 border-amber-500/30";
-  }
-};
+// ─── API helper ───────────────────────────────────────────────────────────────
 
-//  API helpers — using /admins (plural)
-const fetchProviderRequests = async () => {
-  try {
-    const response = await api.get("/admins/providers/pending");
-    return response.data.data || [];
-  } catch (error) {
-    console.error("Failed to fetch provider requests:", error);
-    const message =
-      error.response?.data?.message ||
-      error.message ||
-      "Failed to load provider applications";
+const API_BASE = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '') + '/admins';
+
+async function apiFetch(path, { method = 'GET', body } = {}) {
+  const token = localStorage.getItem('token');
+  const res = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    ...(body ? { body } : {}),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const message = err.message || `Request failed (${res.status})`;
     toast.error(message);
-    throw error;
+    throw new Error(message);
   }
-};
+  return res.json();
+}
 
-const approveProvider = async (id) => {
-  try {
-    const response = await api.patch(`/admins/providers/${id}/verify`, {
-      action: "approve",
-    });
-    return response.data;
-  } catch (error) {
-    console.error("Approve provider error:", error);
-    const message =
-      error.response?.data?.message || error.message || "Approval failed";
-    toast.error(message);
-    throw error;
+// Safely extract an array from whatever envelope the backend returns.
+// Handles: [], { data: [] }, { users/jobs/discussions: [] }, { data: { data: [] } }
+function extractArray(res, keys = []) {
+  if (Array.isArray(res)) return res;
+  for (const key of keys) {
+    if (Array.isArray(res[key])) return res[key];
   }
-};
+  if (res.data) return extractArray(res.data, keys);
+  return [];
+}
 
-const rejectProvider = async (id) => {
-  try {
-    const response = await api.patch(`/admins/providers/${id}/verify`, {
-      action: "reject",
-    });
-    return response.data;
-  } catch (error) {
-    console.error("Reject provider error:", error);
-    const message =
-      error.response?.data?.message || error.message || "Rejection failed";
-    toast.error(message);
-    throw error;
-  }
-};
+function extractTotal(res, arr) {
+  return res.total ?? res.totalCount ?? res.pagination?.total ?? arr.length;
+}
 
-export default function AdminDashboardClient() {
-  const [requests, setRequests] = useState([]);
+function extractTotalPages(res, arr, limit) {
+  return res.totalPages ?? res.pagination?.totalPages ?? Math.ceil(extractTotal(res, arr) / limit);
+}
+
+// ─── Pagination ───────────────────────────────────────────────────────────────
+
+const Pagination = ({ currentPage, totalPages, onPageChange }) => (
+  <div className="flex items-center justify-center gap-2 mt-4">
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => onPageChange(currentPage - 1)}
+      disabled={currentPage === 1}
+    >
+      Previous
+    </Button>
+    <div className="flex gap-1">
+      {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+        <Button
+          key={page}
+          variant={currentPage === page ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => onPageChange(page)}
+        >
+          {page}
+        </Button>
+      ))}
+    </div>
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => onPageChange(currentPage + 1)}
+      disabled={currentPage === totalPages}
+    >
+      Next
+    </Button>
+  </div>
+);
+
+// ─── Users Tab ────────────────────────────────────────────────────────────────
+
+const UsersTab = () => {
+  const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [viewMode, setViewMode] = useState("list");
-  const [selectedRequest, setSelectedRequest] = useState(null);
-  const [edits, setEdits] = useState({});
-  const [processingId, setProcessingId] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [viewMode, setViewMode] = useState('table');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [newUser, setNewUser] = useState({ fullName: '', email: '', role: '' });
+  const [editForm, setEditForm] = useState({});
+  const itemsPerPage = 5;
 
-  const loadRequests = async () => {
+  // GET /api/admin/users
+  const fetchUsers = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const data = await fetchProviderRequests();
-      setRequests(data);
+      const params = new URLSearchParams({
+        page: currentPage,
+        limit: itemsPerPage,
+        ...(searchTerm && { search: searchTerm }),
+      });
+      const data = await apiFetch(`/users?${params}`);
+      const arr = extractArray(data, ['users', 'data']);
+      setUsers(arr);
+      setTotalPages(extractTotalPages(data, arr, itemsPerPage));
     } catch (err) {
-      setRequests([]);
+      console.error('Failed to fetch users:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    loadRequests();
-  }, []);
+  useEffect(() => { fetchUsers(); }, [currentPage, searchTerm]);
 
-  //  Correct status extraction
-  const getVerificationStatus = (request) => {
-    return request.providerDetails?.verificationStatus || "pending";
-  };
-
-  const filteredRequests = requests.filter((req) => {
-    const nameOrBusiness = req.businessName || req.name || "";
-    const matchesSearch =
-      nameOrBusiness.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (req.email?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false) ||
-      (req.providerDetails?.headline?.toLowerCase().includes(searchTerm.toLowerCase()) ??
-        false);
-
-    const currentStatus = getVerificationStatus(req);
-    const matchesStatus = statusFilter === "all" || currentStatus === statusFilter;
-
-    return matchesSearch && matchesStatus;
-  });
-
-  //  Accurate stats using correct status path
-  const stats = {
-    total: requests.length,
-    pending: requests.filter((r) => getVerificationStatus(r) === "pending").length,
-    approved: requests.filter((r) => getVerificationStatus(r) === "approved").length,
-    rejected: requests.filter((r) => getVerificationStatus(r) === "rejected").length,
-  };
-
-  const handleApprove = async (id) => {
-    setProcessingId(id);
+  // DELETE /api/admin/users/:id  (soft-delete)
+  const deleteUser = async (id) => {
     try {
-      await approveProvider(id);
-      toast.success("Provider approved successfully!");
-      setRequests((prev) =>
-        prev.map((req) =>
-          req._id === id
-            ? {
-              ...req,
-              providerDetails: {
-                ...req.providerDetails,
-                verificationStatus: "approved",
-                isVerified: true,
-              },
-            }
-            : req
-        )
-      );
-      if (selectedRequest?._id === id) setSelectedRequest(null);
+      await apiFetch(`/users/${id}`, { method: 'DELETE' });
+      fetchUsers();
     } catch (err) {
-      // Error already shown in approveProvider
-    } finally {
-      setProcessingId(null);
+      console.error('Failed to delete user:', err);
     }
   };
 
-  const handleReject = async (id) => {
-    setProcessingId(id);
+  // PATCH /api/admin/users/:id/suspend
+  const toggleSuspend = async (user) => {
     try {
-      await rejectProvider(id);
-      toast.success("Provider rejected.");
-      setRequests((prev) =>
-        prev.map((req) =>
-          req._id === id
-            ? {
-              ...req,
-              providerDetails: {
-                ...req.providerDetails,
-                verificationStatus: "rejected",
-                isVerified: false,
-              },
-            }
-            : req
-        )
-      );
-      if (selectedRequest?._id === id) setSelectedRequest(null);
+      await apiFetch(`/users/${user._id ?? user.id}/suspend`, {
+        method: 'PATCH',
+        body: JSON.stringify({ suspend: !user.isSuspended }),
+      });
+      fetchUsers();
     } catch (err) {
-      // Error already shown
-    } finally {
-      setProcessingId(null);
+      console.error('Failed to toggle suspend:', err);
     }
   };
 
-  const handleEdit = (field, value) => {
-    setEdits((prev) => ({ ...prev, [field]: value }));
+  const openEdit = (user) => {
+    setSelectedUser(user);
+    setEditForm({
+      fullName: user.fullName ?? user.name,
+      email: user.email,
+      role: user.role,
+      isSuspended: user.isSuspended ?? user.status === 'Inactive',
+    });
+    setIsEditDialogOpen(true);
   };
 
-  const handleModalClose = () => {
-    setSelectedRequest(null);
-    setEdits({});
+  // PATCH /api/admin/users/:id
+  const saveEdit = async () => {
+    try {
+      await apiFetch(`/users/${selectedUser._id ?? selectedUser.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(editForm),
+      });
+      setIsEditDialogOpen(false);
+      fetchUsers();
+    } catch (err) {
+      console.error('Failed to update user:', err);
+    }
   };
 
-  // Helper to safely format status for display
-  const formatStatus = (status) => {
-    return status.charAt(0).toUpperCase() + status.slice(1);
-  };
-
-  if (loading) {
+  const statusBadge = (user) => {
+    const active = !user.isSuspended && (user.status !== 'Inactive');
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <Loader2 className="w-8 h-8 animate-spin text-green-600" />
-      </div>
+      <span className={`px-2 py-1 rounded text-xs font-semibold ${active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+        {active ? 'Active' : 'Inactive'}
+      </span>
     );
-  }
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-4xl font-bold text-gray-900 mb-2">Provider Requests</h1>
-        <p className="text-gray-600">
-          Review and manage onboarding applications from service providers
-        </p>
-      </div>
+    <div className="space-y-4">
+      <div className="flex justify-between items-center gap-4">
+        <Input
+          placeholder="Search users..."
+          value={searchTerm}
+          onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+          className="max-w-sm"
+        />
+        <div className="flex gap-2">
+          <Button size="sm" variant={viewMode === 'table' ? 'default' : 'outline'} onClick={() => setViewMode('table')}>
+            <List className="w-4 h-4" />
+          </Button>
+          <Button size="sm" variant={viewMode === 'grid' ? 'default' : 'outline'} onClick={() => setViewMode('grid')}>
+            <LayoutGrid className="w-4 h-4" />
+          </Button>
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-        {[
-          { label: "Total Requests", value: stats.total, color: "from-green-600 to-green-700" },
-          { label: "Pending", value: stats.pending, color: "from-amber-500 to-amber-600" },
-          { label: "Approved", value: stats.approved, color: "from-emerald-500 to-emerald-600" },
-          { label: "Rejected", value: stats.rejected, color: "from-red-500 to-red-600" },
-        ].map((stat) => (
-          <div
-            key={stat.label}
-            className={`bg-gradient-to-br ${stat.color} rounded-lg p-6 border border-white/20 shadow-sm`}
-          >
-            <p className="text-white/90 text-sm font-medium">{stat.label}</p>
-            <p className="text-4xl font-bold text-white mt-2">{stat.value}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Controls */}
-      <div className="mb-6 flex flex-col md:flex-row gap-4 items-center justify-between">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-3 text-gray-500" size={20} />
-          <input
-            type="text"
-            placeholder="Search by business name, email, or headline..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-white border border-gray-300 rounded-lg pl-10 pr-4 py-2.5 text-gray-900 placeholder-gray-500 focus:border-green-500 focus:ring-2 focus:ring-green-200 focus:outline-none transition"
-          />
-        </div>
-
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="bg-white border border-gray-300 rounded-lg px-4 py-2.5 text-gray-900 focus:border-green-500 focus:ring-2 focus:ring-green-200 focus:outline-none transition"
-        >
-          <option value="all">All Status</option>
-          <option value="pending">Pending</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-        </select>
-
-        <div className="flex gap-2 bg-white border border-gray-300 rounded-lg p-1">
-          <button
-            onClick={() => setViewMode("list")}
-            className={`p-2.5 rounded transition ${viewMode === "list" ? "bg-green-600 text-white" : "text-gray-500 hover:text-gray-900"
-              }`}
-          >
-            <List size={20} />
-          </button>
-          <button
-            onClick={() => setViewMode("grid")}
-            className={`p-2.5 rounded transition ${viewMode === "grid" ? "bg-green-600 text-white" : "text-gray-500 hover:text-gray-900"
-              }`}
-          >
-            <Grid3x3 size={20} />
-          </button>
-        </div>
-      </div>
-
-      {/* Content */}
-      {filteredRequests.length === 0 ? (
-        <div className="text-center py-12">
-          <p className="text-gray-500">No requests found</p>
-        </div>
-      ) : viewMode === "list" ? (
-        <div className="space-y-3">
-          {filteredRequests.map((request) => {
-            const currentStatus = getVerificationStatus(request);
-            return (
-              <div
-                key={request._id}
-                onClick={() => setSelectedRequest(request)}
-                className="bg-white border border-gray-200 rounded-lg p-4 hover:border-green-500 hover:shadow-md transition cursor-pointer"
-              >
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex-1">
-                    <h3 className="text-lg font-semibold text-gray-900">
-                      {request.businessName || request.name}
-                    </h3>
-                    <p className="text-sm text-gray-600">{request.email}</p>
-                  </div>
-                  <span
-                    className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(currentStatus)}`}
-                  >
-                    {formatStatus(currentStatus)}
-                  </span>
-                </div>
-                <p className="text-sm text-gray-700 mb-3">
-                  {request.providerDetails?.headline ?? "No headline"}
-                </p>
-                <div className="flex items-center justify-between">
-                  <div className="text-sm text-gray-600">
-                    <p>💼 {(request.providerDetails?.experienceYears ?? 0)}+ years experience</p>
-                    <p>
-                      📍 {request.providerDetails?.serviceAreas?.[0]?.address ?? "Location not set"}
-                    </p>
-                  </div>
-                  <button className="text-green-600 hover:text-green-700 flex items-center gap-1 text-sm transition">
-                    <Eye size={16} /> View
-                  </button>
-                </div>
+          {/* Add User Dialog */}
+          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm"><Plus className="w-4 h-4 mr-1" /> Add User</Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Add New User</DialogTitle>
+                <DialogDescription>Create a new user account</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <Input
+                  placeholder="Full Name"
+                  value={newUser.fullName}
+                  onChange={(e) => setNewUser({ ...newUser, fullName: e.target.value })}
+                />
+                <Input
+                  placeholder="Email"
+                  type="email"
+                  value={newUser.email}
+                  onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                />
+                <Select onValueChange={(v) => setNewUser({ ...newUser, role: v })}>
+                  <SelectTrigger><SelectValue placeholder="Role" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="freelancer">Freelancer</SelectItem>
+                    <SelectItem value="client">Client</SelectItem>
+                  </SelectContent>
+                </Select>
+                {/* Note: user creation via admin route isn't defined in the provided routes;
+                    wire to your own POST /api/admin/users or auth signup endpoint */}
+                <Button className="w-full" onClick={() => setIsAddDialogOpen(false)}>
+                  Create User
+                </Button>
               </div>
-            );
-          })}
+            </DialogContent>
+          </Dialog>
         </div>
+      </div>
+
+      {loading ? (
+        <p className="text-center text-muted-foreground py-8">Loading users…</p>
+      ) : viewMode === 'table' ? (
+        <>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Role</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {users.map((user) => (
+                <TableRow key={user._id ?? user.id}>
+                  <TableCell>{user.fullName ?? user.name}</TableCell>
+                  <TableCell>{user.email}</TableCell>
+                  <TableCell className="capitalize">{user.role}</TableCell>
+                  <TableCell>{statusBadge(user)}</TableCell>
+                  <TableCell>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => openEdit(user)}>
+                        <Edit2 className="w-4 h-4" />
+                      </Button>
+                      {/* PATCH /api/admin/users/:id/suspend */}
+                      <Button size="sm" variant="outline" onClick={() => toggleSuspend(user)}>
+                        {user.isSuspended ? 'Unsuspend' : 'Suspend'}
+                      </Button>
+                      {/* DELETE /api/admin/users/:id */}
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button size="sm" variant="destructive"><Trash2 className="w-4 h-4" /></Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete User</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Are you sure you want to delete {user.fullName ?? user.name}? This action cannot be undone.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogAction onClick={() => deleteUser(user._id ?? user.id)}>Delete</AlertDialogAction>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
+        </>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredRequests.map((request) => {
-            const currentStatus = getVerificationStatus(request);
-            const image =
-              request.providerDetails?.portfolios?.[0]?.images?.[0] ||
-              "/customer-service-interaction.png";
-            return (
-              <div
-                key={request._id}
-                onClick={() => setSelectedRequest(request)}
-                className="bg-white border border-gray-200 rounded-lg overflow-hidden hover:border-green-500 hover:shadow-md transition cursor-pointer"
-              >
-                <div className="relative h-40 overflow-hidden bg-gray-100">
-                  <img
-                    src={image}
-                    alt={request.businessName || request.name}
-                    className="w-full h-full object-cover"
-                    onError={(e) => {
-                      e.target.style.display = 'none';
-                    }} />
-                  <div className="absolute top-3 right-3">
-                    <span
-                      className={`px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(currentStatus)}`}
-                    >
-                      {formatStatus(currentStatus)}
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {users.map((user) => (
+              <Card key={user._id ?? user.id}>
+                <CardHeader>
+                  <CardTitle className="text-lg">{user.fullName ?? user.name}</CardTitle>
+                  <CardDescription>{user.email}</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div className="text-sm"><strong>Role:</strong> <span className="capitalize">{user.role}</span></div>
+                  <div className="text-sm"><strong>Status:</strong> <span className="ml-2">{statusBadge(user)}</span></div>
+                  <div className="flex gap-2 mt-4">
+                    <Button size="sm" className="flex-1" variant="outline" onClick={() => openEdit(user)}>
+                      <Edit2 className="w-4 h-4 mr-1" /> Edit
+                    </Button>
+                    <Button size="sm" className="flex-1" variant="outline" onClick={() => toggleSuspend(user)}>
+                      {user.isSuspended ? 'Unsuspend' : 'Suspend'}
+                    </Button>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button size="sm" variant="destructive"><Trash2 className="w-4 h-4" /></Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Delete User</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Are you sure you want to delete {user.fullName ?? user.name}?
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogAction onClick={() => deleteUser(user._id ?? user.id)}>Delete</AlertDialogAction>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+          <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
+        </>
+      )}
+
+      {/* Edit User Dialog — PATCH /api/admin/users/:id */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit User</DialogTitle>
+            <DialogDescription>Update user information</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Input
+              value={editForm.fullName ?? ''}
+              onChange={(e) => setEditForm({ ...editForm, fullName: e.target.value })}
+              placeholder="Full Name"
+            />
+            <Input
+              value={editForm.email ?? ''}
+              onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+              placeholder="Email"
+              type="email"
+            />
+            <Select value={editForm.role} onValueChange={(v) => setEditForm({ ...editForm, role: v })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="freelancer">Freelancer</SelectItem>
+                <SelectItem value="client">Client</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
+              value={editForm.isSuspended ? 'inactive' : 'active'}
+              onValueChange={(v) => setEditForm({ ...editForm, isSuspended: v === 'inactive' })}
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="inactive">Suspended</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button className="w-full" onClick={saveEdit}>Save Changes</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+// ─── Jobs Tab ─────────────────────────────────────────────────────────────────
+
+const JobsTab = () => {
+  const [jobs, setJobs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [viewMode, setViewMode] = useState('table');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedJob, setSelectedJob] = useState(null);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [editForm, setEditForm] = useState({});
+  const [newJob, setNewJob] = useState({ title: '', client: '', budget: '', category: '' });
+  const itemsPerPage = 5;
+
+  // GET /api/admin/jobs
+  const fetchJobs = async (includeDeleted = false) => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        page: currentPage,
+        limit: itemsPerPage,
+        ...(searchTerm && { search: searchTerm }),
+        ...(includeDeleted && { includeDeleted: true }),
+      });
+      const data = await apiFetch(`/jobs?${params}`);
+      const arr = extractArray(data, ['jobs', 'data']);
+      setJobs(arr);
+      setTotalPages(extractTotalPages(data, arr, itemsPerPage));
+    } catch (err) {
+      console.error('Failed to fetch jobs:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchJobs(); }, [currentPage, searchTerm]);
+
+  // DELETE /api/admin/jobs/:id
+  const deleteJob = async (id) => {
+    try {
+      await apiFetch(`/jobs/${id}`, { method: 'DELETE' });
+      fetchJobs();
+    } catch (err) {
+      console.error('Failed to delete job:', err);
+    }
+  };
+
+  // POST /api/admin/jobs/:id/restore
+  const restoreJob = async (id) => {
+    try {
+      await apiFetch(`/jobs/${id}/restore`, { method: 'POST' });
+      fetchJobs();
+    } catch (err) {
+      console.error('Failed to restore job:', err);
+    }
+  };
+
+  const openEdit = (job) => {
+    setSelectedJob(job);
+    setEditForm({
+      title: job.title,
+      budget: job.budget,
+      category: job.category,
+      status: job.status,
+    });
+    setIsEditDialogOpen(true);
+  };
+
+  // PATCH /api/admin/jobs/:id
+  const saveEdit = async () => {
+    try {
+      await apiFetch(`/jobs/${selectedJob._id ?? selectedJob.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(editForm),
+      });
+      setIsEditDialogOpen(false);
+      fetchJobs();
+    } catch (err) {
+      console.error('Failed to update job:', err);
+    }
+  };
+
+  const statusColor = (status) => {
+    switch (status) {
+      case 'Open': return 'bg-blue-100 text-blue-800';
+      case 'In Progress': return 'bg-yellow-100 text-yellow-800';
+      case 'Completed': return 'bg-green-100 text-green-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center gap-4">
+        <Input
+          placeholder="Search jobs..."
+          value={searchTerm}
+          onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+          className="max-w-sm"
+        />
+        <div className="flex gap-2">
+          <Button size="sm" variant={viewMode === 'table' ? 'default' : 'outline'} onClick={() => setViewMode('table')}>
+            <List className="w-4 h-4" />
+          </Button>
+          <Button size="sm" variant={viewMode === 'grid' ? 'default' : 'outline'} onClick={() => setViewMode('grid')}>
+            <LayoutGrid className="w-4 h-4" />
+          </Button>
+
+          {/* Add Job Dialog */}
+          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm"><Plus className="w-4 h-4 mr-1" /> Add Job</Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Add New Job</DialogTitle>
+                <DialogDescription>Create a new job posting</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <Input
+                  placeholder="Job Title"
+                  value={newJob.title}
+                  onChange={(e) => setNewJob({ ...newJob, title: e.target.value })}
+                />
+                <Input
+                  placeholder="Client Name"
+                  value={newJob.client}
+                  onChange={(e) => setNewJob({ ...newJob, client: e.target.value })}
+                />
+                <Input
+                  placeholder="Budget"
+                  value={newJob.budget}
+                  onChange={(e) => setNewJob({ ...newJob, budget: e.target.value })}
+                />
+                <Select onValueChange={(v) => setNewJob({ ...newJob, category: v })}>
+                  <SelectTrigger><SelectValue placeholder="Category" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="design">Design</SelectItem>
+                    <SelectItem value="development">Development</SelectItem>
+                    <SelectItem value="writing">Writing</SelectItem>
+                    <SelectItem value="marketing">Marketing</SelectItem>
+                  </SelectContent>
+                </Select>
+                {/* Wire to your job-creation endpoint */}
+                <Button className="w-full" onClick={() => setIsAddDialogOpen(false)}>Create Job</Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
+
+      {loading ? (
+        <p className="text-center text-muted-foreground py-8">Loading jobs…</p>
+      ) : viewMode === 'table' ? (
+        <>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Title</TableHead>
+                <TableHead>Client</TableHead>
+                <TableHead>Budget</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {jobs.map((job) => (
+                <TableRow key={job._id ?? job.id} className={job.isDeleted ? 'opacity-50' : ''}>
+                  <TableCell>{job.title}</TableCell>
+                  <TableCell>{job.client?.fullName ?? job.client}</TableCell>
+                  <TableCell>{job.budget}</TableCell>
+                  <TableCell className="capitalize">{job.category}</TableCell>
+                  <TableCell>
+                    <span className={`px-2 py-1 rounded text-xs font-semibold ${statusColor(job.status)}`}>{job.status}</span>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => openEdit(job)}>
+                        <Edit2 className="w-4 h-4" />
+                      </Button>
+                      {job.isDeleted ? (
+                        /* POST /api/admin/jobs/:id/restore */
+                        <Button size="sm" variant="outline" onClick={() => restoreJob(job._id ?? job.id)}>
+                          <RotateCcw className="w-4 h-4" />
+                        </Button>
+                      ) : (
+                        /* DELETE /api/admin/jobs/:id */
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button size="sm" variant="destructive"><Trash2 className="w-4 h-4" /></Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Delete Job</AlertDialogTitle>
+                              <AlertDialogDescription>Are you sure? This action cannot be undone.</AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogAction onClick={() => deleteJob(job._id ?? job.id)}>Delete</AlertDialogAction>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
+        </>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {jobs.map((job) => (
+              <Card key={job._id ?? job.id} className={job.isDeleted ? 'opacity-50' : ''}>
+                <CardHeader>
+                  <CardTitle className="text-lg">{job.title}</CardTitle>
+                  <CardDescription>{job.client?.fullName ?? job.client}</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div className="text-sm"><strong>Budget:</strong> {job.budget}</div>
+                  <div className="text-sm"><strong>Category:</strong> <span className="capitalize">{job.category}</span></div>
+                  <div className="text-sm">
+                    <strong>Status:</strong>
+                    <span className={`ml-2 px-2 py-1 rounded text-xs font-semibold ${statusColor(job.status)}`}>{job.status}</span>
+                  </div>
+                  <div className="flex gap-2 mt-4">
+                    <Button size="sm" className="flex-1" variant="outline" onClick={() => openEdit(job)}>
+                      <Edit2 className="w-4 h-4 mr-1" /> Edit
+                    </Button>
+                    {job.isDeleted ? (
+                      <Button size="sm" className="flex-1" variant="outline" onClick={() => restoreJob(job._id ?? job.id)}>
+                        <RotateCcw className="w-4 h-4 mr-1" /> Restore
+                      </Button>
+                    ) : (
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button size="sm" className="flex-1" variant="destructive">
+                            <Trash2 className="w-4 h-4 mr-1" /> Delete
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete Job</AlertDialogTitle>
+                            <AlertDialogDescription>Are you sure? This action cannot be undone.</AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogAction onClick={() => deleteJob(job._id ?? job.id)}>Delete</AlertDialogAction>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+          <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
+        </>
+      )}
+
+      {/* Edit Job Dialog — PATCH /api/admin/jobs/:id */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Job</DialogTitle>
+            <DialogDescription>Update job information</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Input
+              value={editForm.title ?? ''}
+              onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+              placeholder="Job Title"
+            />
+            <Input
+              value={editForm.budget ?? ''}
+              onChange={(e) => setEditForm({ ...editForm, budget: e.target.value })}
+              placeholder="Budget"
+            />
+            <Select value={editForm.category} onValueChange={(v) => setEditForm({ ...editForm, category: v })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="design">Design</SelectItem>
+                <SelectItem value="development">Development</SelectItem>
+                <SelectItem value="writing">Writing</SelectItem>
+                <SelectItem value="marketing">Marketing</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={editForm.status} onValueChange={(v) => setEditForm({ ...editForm, status: v })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Open">Open</SelectItem>
+                <SelectItem value="In Progress">In Progress</SelectItem>
+                <SelectItem value="Completed">Completed</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button className="w-full" onClick={saveEdit}>Save Changes</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+// ─── Forum / Discussions Tab ──────────────────────────────────────────────────
+
+const ForumTab = () => {
+  const [forums, setForums] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [viewMode, setViewMode] = useState('table');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedForum, setSelectedForum] = useState(null);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [editForm, setEditForm] = useState({});
+  const [newDiscussion, setNewDiscussion] = useState({ title: '', content: '', category: '', isPinned: false });
+  const itemsPerPage = 5;
+
+  // GET /api/admin/discussions
+  const fetchForums = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        page: currentPage,
+        limit: itemsPerPage,
+        ...(searchTerm && { search: searchTerm }),
+      });
+      const data = await apiFetch(`/discussions?${params}`);
+      const arr = extractArray(data, ['discussions', 'data']);
+      setForums(arr);
+      setTotalPages(extractTotalPages(data, arr, itemsPerPage));
+    } catch (err) {
+      console.error('Failed to fetch discussions:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchForums(); }, [currentPage, searchTerm]);
+
+  // DELETE /api/admin/discussions/:id
+  const deleteForum = async (id) => {
+    try {
+      await apiFetch(`/discussions/${id}`, { method: 'DELETE' });
+      fetchForums();
+    } catch (err) {
+      console.error('Failed to delete discussion:', err);
+    }
+  };
+
+  // POST /api/admin/discussions/:id/restore
+  const restoreForum = async (id) => {
+    try {
+      await apiFetch(`/discussions/${id}/restore`, { method: 'POST' });
+      fetchForums();
+    } catch (err) {
+      console.error('Failed to restore discussion:', err);
+    }
+  };
+
+  // PATCH /api/admin/discussions/:id/pin
+  const togglePin = async (id) => {
+    try {
+      await apiFetch(`/discussions/${id}/pin`, { method: 'PATCH' });
+      fetchForums();
+    } catch (err) {
+      console.error('Failed to toggle pin:', err);
+    }
+  };
+
+  const openEdit = (forum) => {
+    setSelectedForum(forum);
+    setEditForm({
+      title: forum.title,
+      category: forum.category,
+      isClosed: forum.isClosed ?? forum.status === 'Closed',
+      isPinned: forum.isPinned ?? false,
+    });
+    setIsEditDialogOpen(true);
+  };
+
+  // PATCH /api/admin/discussions/:id
+  const saveEdit = async () => {
+    try {
+      await apiFetch(`/discussions/${selectedForum._id ?? selectedForum.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(editForm),
+      });
+      setIsEditDialogOpen(false);
+      fetchForums();
+    } catch (err) {
+      console.error('Failed to update discussion:', err);
+    }
+  };
+
+  // POST /api/admin/discussions
+  const createDiscussion = async () => {
+    try {
+      await apiFetch('/discussions', {
+        method: 'POST',
+        body: JSON.stringify(newDiscussion),
+      });
+      setIsAddDialogOpen(false);
+      setNewDiscussion({ title: '', content: '', category: '', isPinned: false });
+      fetchForums();
+    } catch (err) {
+      console.error('Failed to create discussion:', err);
+    }
+  };
+
+  const statusColor = (forum) => {
+    if (forum.isDeleted) return 'bg-gray-100 text-gray-800';
+    if (forum.status === 'Flagged') return 'bg-red-100 text-red-800';
+    if (forum.isClosed || forum.status === 'Closed') return 'bg-gray-100 text-gray-800';
+    return 'bg-green-100 text-green-800';
+  };
+
+  const statusLabel = (forum) => {
+    if (forum.isDeleted) return 'Deleted';
+    if (forum.status) return forum.status;
+    if (forum.isClosed) return 'Closed';
+    return 'Active';
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center gap-4">
+        <Input
+          placeholder="Search discussions..."
+          value={searchTerm}
+          onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+          className="max-w-sm"
+        />
+        <div className="flex gap-2">
+          <Button size="sm" variant={viewMode === 'table' ? 'default' : 'outline'} onClick={() => setViewMode('table')}>
+            <List className="w-4 h-4" />
+          </Button>
+          <Button size="sm" variant={viewMode === 'grid' ? 'default' : 'outline'} onClick={() => setViewMode('grid')}>
+            <LayoutGrid className="w-4 h-4" />
+          </Button>
+
+          {/* Add Discussion — POST /api/admin/discussions */}
+          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm"><Plus className="w-4 h-4 mr-1" /> Add Discussion</Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Create New Discussion</DialogTitle>
+                <DialogDescription>Start a new forum discussion</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <Input
+                  placeholder="Discussion Title"
+                  value={newDiscussion.title}
+                  onChange={(e) => setNewDiscussion({ ...newDiscussion, title: e.target.value })}
+                />
+                <Input
+                  placeholder="Content"
+                  value={newDiscussion.content}
+                  onChange={(e) => setNewDiscussion({ ...newDiscussion, content: e.target.value })}
+                />
+                <Select onValueChange={(v) => setNewDiscussion({ ...newDiscussion, category: v })}>
+                  <SelectTrigger><SelectValue placeholder="Category" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="tips">Tips</SelectItem>
+                    <SelectItem value="qa">Q&A</SelectItem>
+                    <SelectItem value="tools">Tools</SelectItem>
+                    <SelectItem value="feedback">Feedback</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button className="w-full" onClick={createDiscussion}>Create Discussion</Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
+
+      {loading ? (
+        <p className="text-center text-muted-foreground py-8">Loading discussions…</p>
+      ) : viewMode === 'table' ? (
+        <>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Title</TableHead>
+                <TableHead>Author</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead>Replies</TableHead>
+                <TableHead>Views</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {forums.map((forum) => (
+                <TableRow key={forum._id ?? forum.id} className={forum.isDeleted ? 'opacity-50' : ''}>
+                  <TableCell className="flex items-center gap-1">
+                    {forum.isPinned && <Pin className="w-3 h-3 text-blue-500" />}
+                    {forum.title}
+                  </TableCell>
+                  <TableCell>{forum.author?.fullName ?? forum.author}</TableCell>
+                  <TableCell className="capitalize">{forum.category}</TableCell>
+                  <TableCell>{forum.replies ?? forum.repliesCount ?? 0}</TableCell>
+                  <TableCell>{forum.views ?? 0}</TableCell>
+                  <TableCell>
+                    <span className={`px-2 py-1 rounded text-xs font-semibold ${statusColor(forum)}`}>
+                      {statusLabel(forum)}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => openEdit(forum)}>
+                        <Edit2 className="w-4 h-4" />
+                      </Button>
+                      {/* PATCH /api/admin/discussions/:id/pin */}
+                      <Button size="sm" variant="outline" onClick={() => togglePin(forum._id ?? forum.id)}>
+                        <Pin className={`w-4 h-4 ${forum.isPinned ? 'text-blue-500' : ''}`} />
+                      </Button>
+                      {forum.isDeleted ? (
+                        /* POST /api/admin/discussions/:id/restore */
+                        <Button size="sm" variant="outline" onClick={() => restoreForum(forum._id ?? forum.id)}>
+                          <RotateCcw className="w-4 h-4" />
+                        </Button>
+                      ) : (
+                        /* DELETE /api/admin/discussions/:id */
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button size="sm" variant="destructive"><Trash2 className="w-4 h-4" /></Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Delete Discussion</AlertDialogTitle>
+                              <AlertDialogDescription>Are you sure? This action cannot be undone.</AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogAction onClick={() => deleteForum(forum._id ?? forum.id)}>Delete</AlertDialogAction>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
+        </>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {forums.map((forum) => (
+              <Card key={forum._id ?? forum.id} className={forum.isDeleted ? 'opacity-50' : ''}>
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-1">
+                    {forum.isPinned && <Pin className="w-4 h-4 text-blue-500" />}
+                    {forum.title}
+                  </CardTitle>
+                  <CardDescription>{forum.author?.fullName ?? forum.author}</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <div className="text-sm"><strong>Category:</strong> <span className="capitalize">{forum.category}</span></div>
+                  <div className="text-sm"><strong>Replies:</strong> {forum.replies ?? forum.repliesCount ?? 0}</div>
+                  <div className="text-sm"><strong>Views:</strong> {forum.views ?? 0}</div>
+                  <div className="text-sm">
+                    <strong>Status:</strong>
+                    <span className={`ml-2 px-2 py-1 rounded text-xs font-semibold ${statusColor(forum)}`}>
+                      {statusLabel(forum)}
                     </span>
                   </div>
-                </div>
-                <div className="p-4">
-                  <h3 className="font-semibold text-gray-900 mb-1">
-                    {request.businessName || request.name}
-                  </h3>
-                  <p className="text-sm text-gray-700 line-clamp-2 mb-3">
-                    {request.providerDetails?.headline ?? "No headline"}
-                  </p>
-                  <div className="space-y-1 text-xs text-gray-600 mb-4">
-                    <p>⭐ {(request.providerDetails?.experienceYears ?? 0)}+ years</p>
-                    <p>💰 ${(request.providerDetails?.rate ?? 0)}/hour</p>
+                  <div className="flex gap-2 mt-4 flex-wrap">
+                    <Button size="sm" className="flex-1" variant="outline" onClick={() => openEdit(forum)}>
+                      <Edit2 className="w-4 h-4 mr-1" /> Edit
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => togglePin(forum._id ?? forum.id)}>
+                      <Pin className={`w-4 h-4 ${forum.isPinned ? 'text-blue-500' : ''}`} />
+                    </Button>
+                    {forum.isDeleted ? (
+                      <Button size="sm" className="flex-1" variant="outline" onClick={() => restoreForum(forum._id ?? forum.id)}>
+                        <RotateCcw className="w-4 h-4 mr-1" /> Restore
+                      </Button>
+                    ) : (
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button size="sm" className="flex-1" variant="destructive">
+                            <Trash2 className="w-4 h-4 mr-1" /> Delete
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete Discussion</AlertDialogTitle>
+                            <AlertDialogDescription>Are you sure? This action cannot be undone.</AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogAction onClick={() => deleteForum(forum._id ?? forum.id)}>Delete</AlertDialogAction>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    )}
                   </div>
-                  <button className="w-full bg-green-600 hover:bg-green-700 text-white rounded py-2 text-sm font-medium transition flex items-center justify-center gap-2">
-                    <Eye size={16} /> View Details
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Modal */}
-      {selectedRequest && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white border border-gray-200 rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            {/* Modal Header */}
-            <div className="bg-gradient-to-r from-green-600 to-green-700 p-6 border-b border-gray-200">
-              <div className="flex justify-between items-start">
-                <div>
-                  <h2 className="text-2xl font-bold text-white">
-                    {selectedRequest.businessName || selectedRequest.name}
-                  </h2>
-                  <p className="text-green-100 text-sm mt-1">{selectedRequest.email}</p>
-                </div>
-                <button
-                  onClick={handleModalClose}
-                  className="text-green-100 hover:text-white transition"
-                >
-                  <X size={24} />
-                </button>
-              </div>
-            </div>
-
-            {/* Modal Content */}
-            <div className="p-6 space-y-6 bg-white">
-              {/* Headline */}
-              <div>
-                <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
-                  <Edit2 size={16} className="text-green-600" />
-                  Professional Headline
-                </label>
-                <textarea
-                  value={edits.headline ?? selectedRequest.providerDetails?.headline ?? ""}
-                  onChange={(e) => handleEdit("headline", e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-300 rounded-lg p-3 text-gray-900 text-sm focus:border-green-500 focus:ring-2 focus:ring-green-200 focus:outline-none"
-                  rows={2}
-                  disabled={true}
-                />
-                <p className="text-xs text-gray-500 mt-1">Editable in future versions</p>
-              </div>
-
-              {/* Work Description */}
-              <div>
-                <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
-                  <Edit2 size={16} className="text-green-600" />
-                  Work Description
-                </label>
-                <textarea
-                  value={
-                    edits.workDescription ??
-                    selectedRequest.providerDetails?.workDescription ??
-                    ""
-                  }
-                  onChange={(e) => handleEdit("workDescription", e.target.value)}
-                  className="w-full bg-gray-50 border border-gray-300 rounded-lg p-3 text-gray-900 text-sm focus:border-green-500 focus:ring-2 focus:ring-green-200 focus:outline-none"
-                  rows={4}
-                  disabled={true}
-                />
-              </div>
-
-              {/* Skills */}
-              <div>
-                <label className="text-sm font-semibold text-gray-700 mb-3 block">Skills</label>
-                <div className="space-y-2">
-                  {(selectedRequest.providerDetails?.skills || []).map((skill, idx) => (
-                    <div key={idx} className="bg-gray-50 border border-gray-300 rounded-lg p-3">
-                      <div className="flex justify-between items-start mb-2">
-                        <p className="font-medium text-gray-900">{skill.name}</p>
-                        <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
-                          {skill.years} {skill.years === 1 ? "year" : "years"}
-                        </span>
-                      </div>
-                      <div className="w-full bg-gray-200 rounded h-1.5">
-                        <div
-                          className="bg-green-600 h-1.5 rounded"
-                          style={{ width: `${(skill.proficiency / 10) * 100}%` }}
-                        />
-                      </div>
-                      <p className="text-xs text-gray-600 mt-1">
-                        Proficiency: {skill.proficiency}/10
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Service Areas */}
-              <div>
-                <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-3">
-                  <Lock size={16} className="text-red-500" />
-                  Service Areas (Read-only)
-                </label>
-                <div className="space-y-2">
-                  {(selectedRequest.providerDetails?.serviceAreas || []).map((area, idx) => (
-                    <div key={idx} className="bg-gray-50 border border-red-200 rounded-lg p-3">
-                      <p className="text-gray-900 font-medium">{area.address}</p>
-                      <p className="text-xs text-gray-600 mt-1">
-                        Service Radius: {area.radiusKm} km
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Pricing */}
-              <div>
-                <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-3">
-                  <Lock size={16} className="text-red-500" />
-                  Pricing (Read-only)
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    {
-                      label: "Hourly Rate",
-                      value: `$${selectedRequest.providerDetails?.rate ?? 0}/hour`,
-                    },
-                    {
-                      label: "Min. Service Fee",
-                      value: `$${selectedRequest.providerDetails?.minCallOutFee ?? 0}`,
-                    },
-                    {
-                      label: "Travel Fee/km",
-                      value: `$${selectedRequest.providerDetails?.travelFeePerKm ?? 0}`,
-                    },
-                    {
-                      label: "Free Travel Distance",
-                      value: `${selectedRequest.providerDetails?.travelThresholdKm ?? 0} km`,
-                    },
-                  ].map((item, i) => (
-                    <div key={i} className="bg-gray-50 border border-red-200 rounded-lg p-3">
-                      <p className="text-xs text-gray-600">{item.label}</p>
-                      <p className="text-gray-900 font-semibold mt-1">{item.value}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Portfolio */}
-              {(selectedRequest.providerDetails?.portfolios || []).length > 0 && (
-                <div>
-                  <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-3">
-                    <Lock size={16} className="text-red-500" />
-                    Portfolio ({selectedRequest.providerDetails.portfolios.length} projects)
-                  </label>
-                  <div className="space-y-4">
-                    {selectedRequest.providerDetails.portfolios.map((portfolio, idx) => (
-                      <div key={idx} className="bg-gray-50 border border-red-200 rounded-lg p-4">
-                        <div className="flex justify-between items-start mb-2">
-                          <h4 className="font-bold text-gray-900">{portfolio.title || `Project ${idx + 1}`}</h4>
-                          <Badge variant="outline" className="text-xs">
-                            {portfolio.images?.length || 0} image(s)
-                          </Badge>
-                        </div>
-
-                        {portfolio.description && (
-                          <p className="text-sm text-gray-700 mb-3">{portfolio.description}</p>
-                        )}
-
-                        {/* 🖼️ Image Gallery */}
-                        {portfolio.images?.length > 0 ? (
-                          <div className="flex flex-wrap gap-2">
-                            {portfolio.images.map((img, imgIdx) => (
-                              <div key={imgIdx} className="relative group">
-                                <img
-                                  src={img}
-                                  alt={`Portfolio ${idx + 1} - ${imgIdx + 1}`}
-                                  className="w-20 h-20 object-cover rounded border border-gray-300 hover:opacity-75 transition-opacity"
-                                  onError={(e) => (e.target.style.display = 'none')}
-                                />
-                                {/* Optional: Zoom on hover (future enhancement) */}
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-xs italic text-gray-500">No images uploaded</p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Availability */}
-              <div>
-                <label className="text-sm font-semibold text-gray-700 mb-2 block">
-                  Availability Status
-                </label>
-                <div className="inline-block bg-gray-100 border border-gray-300 rounded-lg px-3 py-1">
-                  <span
-                    className={`text-sm font-medium capitalize ${selectedRequest.providerDetails?.availabilityStatus === "available"
-                      ? "text-emerald-600"
-                      : selectedRequest.providerDetails?.availabilityStatus === "busy"
-                        ? "text-amber-600"
-                        : "text-gray-500"
-                      }`}
-                  >
-                    {selectedRequest.providerDetails?.availabilityStatus ?? "unknown"}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="border-t border-gray-200 bg-gray-50 p-4 flex gap-3">
-              <button
-                onClick={() => handleReject(selectedRequest._id)}
-                disabled={processingId === selectedRequest._id}
-                className="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white rounded-lg py-2 transition font-medium disabled:opacity-70"
-              >
-                {processingId === selectedRequest._id ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <X size={18} />
-                )}{" "}
-                Reject
-              </button>
-              <button
-                onClick={() => handleApprove(selectedRequest._id)}
-                disabled={processingId === selectedRequest._id}
-                className="flex-1 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white rounded-lg py-2 transition font-medium disabled:opacity-70"
-              >
-                {processingId === selectedRequest._id ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Check size={18} />
-                )}{" "}
-                Approve
-              </button>
-            </div>
+                </CardContent>
+              </Card>
+            ))}
           </div>
-        </div>
+          <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
+        </>
       )}
+
+      {/* Edit Discussion — PATCH /api/admin/discussions/:id */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Discussion</DialogTitle>
+            <DialogDescription>Update discussion information</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Input
+              value={editForm.title ?? ''}
+              onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+              placeholder="Discussion Title"
+            />
+            <Select value={editForm.category} onValueChange={(v) => setEditForm({ ...editForm, category: v })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="tips">Tips</SelectItem>
+                <SelectItem value="qa">Q&A</SelectItem>
+                <SelectItem value="tools">Tools</SelectItem>
+                <SelectItem value="feedback">Feedback</SelectItem>
+                <SelectItem value="spam">Spam</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select
+              value={editForm.isClosed ? 'closed' : 'active'}
+              onValueChange={(v) => setEditForm({ ...editForm, isClosed: v === 'closed' })}
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="closed">Closed</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button className="w-full" onClick={saveEdit}>Save Changes</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+};
+
+// ─── Dashboard Stats ──────────────────────────────────────────────────────────
+
+const StatsBar = () => {
+  const [stats, setStats] = useState(null);
+
+  useEffect(() => {
+    // GET /api/admin/stats
+    apiFetch('/stats')
+      .then((res) => setStats(res.data ?? res))
+      .catch((err) => console.error('Failed to fetch stats:', err));
+  }, []);
+
+  if (!stats) return null;
+
+  const items = [
+    { label: 'Total Users', value: stats.totalUsers ?? '—' },
+    { label: 'Active Jobs', value: stats.activeJobs ?? '—' },
+    { label: 'Discussions', value: stats.totalDiscussions ?? '—' },
+    { label: 'Pending Verifications', value: stats.pendingVerifications ?? '—' },
+  ];
+
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      {items.map((item) => (
+        <Card key={item.label}>
+          <CardContent className="pt-4">
+            <p className="text-2xl font-bold">{item.value}</p>
+            <p className="text-sm text-muted-foreground">{item.label}</p>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+};
+
+// ─── Main Dashboard ───────────────────────────────────────────────────────────
+
+export default function AdminDashboard() {
+  return (
+    <main className="min-h-screen bg-background p-8">
+      <div className="max-w-7xl mx-auto">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold tracking-tight">Admin Dashboard</h1>
+          <p className="text-muted-foreground mt-2">Manage users, jobs, and forum discussions</p>
+        </div>
+
+        {/* GET /api/admin/stats */}
+        <StatsBar />
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Freelancer Platform Management</CardTitle>
+            <CardDescription>View and manage all platform content</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Tabs defaultValue="users" className="w-full">
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="users">Users</TabsTrigger>
+                <TabsTrigger value="jobs">Jobs</TabsTrigger>
+                <TabsTrigger value="forum">Forum</TabsTrigger>
+              </TabsList>
+              <TabsContent value="users" className="mt-6"><UsersTab /></TabsContent>
+              <TabsContent value="jobs" className="mt-6"><JobsTab /></TabsContent>
+              <TabsContent value="forum" className="mt-6"><ForumTab /></TabsContent>
+            </Tabs>
+          </CardContent>
+        </Card>
+      </div>
+    </main>
   );
 }

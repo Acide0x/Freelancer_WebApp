@@ -17,12 +17,14 @@ import WorkersDashboardPage from "./pages/WorkersDashboardPage";
 import AdminDashboardClient from "./pages/AdminDashboardPage";
 import DiscussionForum from "./pages/DiscussionPostListing";
 import DiscussionPage from "./pages/DiscussionPostDetailsPage";
-import ActiveJobsPage from "./pages/ActiveJobsPage"; // ✅ NEW: Active Jobs Dashboard with Chat
+import ActiveJobsPage from "./pages/ActiveJobsPage"; 
+import AdminLayout from "./pages/AdminLayoutPage";
+import KYCVerification from "./pages/KYCVerificationPage";
 // import JobChatPage from "./pages/JobChatPage";
 
 // Components
 import Navbar from './components/Navbar';
-import Footer from './components/footer';
+import Footer from './components/Footer';
 
 // Context & Utils
 import { AppProvider } from './context/AppContext';
@@ -66,6 +68,10 @@ export default function App() {
             {/* Discussion Forum Route */}
             <Route path="/discussions" element={<DiscussionForum />} />
             <Route path="/discussions/:id" element={<DiscussionPage />} />
+
+            {/* Admin Routes */}
+            <Route path="/admin/*" element={<AdminLayout />} />
+            <Route path="/kyc-verification" element={<KYCVerification />} />
 
             {/* Catch-all fallback */}
             <Route path="*" element={<HomePage />} />

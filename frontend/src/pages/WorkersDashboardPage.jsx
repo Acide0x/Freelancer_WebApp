@@ -7,6 +7,7 @@ import EarningsSection from "@/pages/WorkerDashboard/earnings";
 import MessagesSection from "@/pages/WorkerDashboard/messages";
 import PortfolioSection from "@/pages/WorkerDashboard/portfolio";
 import ReviewsSection from "@/pages/WorkerDashboard/reviews";
+import KYCVerificationSection from "@/pages/AdminDashboardPage";
 import {
   BarChart3,
   MessageSquare,
@@ -15,8 +16,14 @@ import {
   TrendingUp,
   Wallet,
   FolderOpen,
-  Bell,
+  ShieldCheck,
 } from "lucide-react";
+
+const triggerClass =
+  "data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary px-4 py-3 rounded-none text-sm font-medium text-muted-foreground transition-colors hover:text-foreground";
+
+const adminTriggerClass =
+  "data-[state=active]:bg-transparent data-[state=active]:text-emerald-600 data-[state=active]:border-b-2 data-[state=active]:border-emerald-500 px-4 py-3 rounded-none text-sm font-medium text-muted-foreground transition-colors hover:text-emerald-600";
 
 export default function WorkersDashboardPage() {
   return (
@@ -24,61 +31,46 @@ export default function WorkersDashboardPage() {
       <Tabs defaultValue="overview" className="w-full">
         {/* Tab Navigation */}
         <div className="mb-8 overflow-x-auto">
-          <TabsList className="grid w-full grid-cols-4 lg:grid-cols-7 gap-2 bg-transparent p-0 border-b border-border/50 h-auto pb-0">
-            <TabsTrigger
-              value="overview"
-              className="data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary px-4 py-3 rounded-none text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-            >
+          <TabsList className="grid w-full grid-cols-4 lg:grid-cols-8 gap-2 bg-transparent p-0 border-b border-border/50 h-auto pb-0">
+            <TabsTrigger value="overview" className={triggerClass}>
               <BarChart3 className="w-4 h-4 mr-2" />
               <span className="hidden sm:inline">Overview</span>
             </TabsTrigger>
 
-            <TabsTrigger
-              value="jobs"
-              className="data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary px-4 py-3 rounded-none text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-            >
+            <TabsTrigger value="jobs" className={triggerClass}>
               <Briefcase className="w-4 h-4 mr-2" />
               <span className="hidden sm:inline">Jobs</span>
             </TabsTrigger>
 
-            <TabsTrigger
-              value="analytics"
-              className="data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary px-4 py-3 rounded-none text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-            >
+            <TabsTrigger value="analytics" className={triggerClass}>
               <TrendingUp className="w-4 h-4 mr-2" />
               <span className="hidden sm:inline">Analytics</span>
             </TabsTrigger>
 
-            <TabsTrigger
-              value="earnings"
-              className="data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary px-4 py-3 rounded-none text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-            >
+            <TabsTrigger value="earnings" className={triggerClass}>
               <Wallet className="w-4 h-4 mr-2" />
               <span className="hidden sm:inline">Earnings</span>
             </TabsTrigger>
 
-            <TabsTrigger
-              value="messages"
-              className="data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary px-4 py-3 rounded-none text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-            >
+            <TabsTrigger value="messages" className={triggerClass}>
               <MessageSquare className="w-4 h-4 mr-2" />
               <span className="hidden sm:inline">Messages</span>
             </TabsTrigger>
 
-            <TabsTrigger
-              value="portfolio"
-              className="data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary px-4 py-3 rounded-none text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-            >
+            <TabsTrigger value="portfolio" className={triggerClass}>
               <FolderOpen className="w-4 h-4 mr-2" />
               <span className="hidden sm:inline">Portfolio</span>
             </TabsTrigger>
 
-            <TabsTrigger
-              value="reviews"
-              className="data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:border-b-2 data-[state=active]:border-primary px-4 py-3 rounded-none text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-            >
+            <TabsTrigger value="reviews" className={triggerClass}>
               <Star className="w-4 h-4 mr-2" />
               <span className="hidden sm:inline">Reviews</span>
+            </TabsTrigger>
+
+            {/* Admin-only KYC tab — visually distinct with emerald accent */}
+            <TabsTrigger value="kyc" className={adminTriggerClass}>
+              <ShieldCheck className="w-4 h-4 mr-2 flex-shrink-0" />
+              <span className="hidden sm:inline">KYC Verification</span>
             </TabsTrigger>
           </TabsList>
         </div>
@@ -110,6 +102,11 @@ export default function WorkersDashboardPage() {
 
         <TabsContent value="reviews" className="space-y-6">
           <ReviewsSection />
+        </TabsContent>
+
+        {/* KYC Verification — admin page rendered inside the dashboard tab */}
+        <TabsContent value="kyc">
+          <KYCVerificationSection />
         </TabsContent>
       </Tabs>
     </main>

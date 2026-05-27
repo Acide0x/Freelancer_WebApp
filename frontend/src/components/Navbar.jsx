@@ -161,7 +161,7 @@ export default function Navbar() {
 
                   {user.role === "admin" && (
                     <DropdownMenuItem asChild>
-                      <Link to="/admindashboard" className="flex items-center text-sm px-3 py-2 rounded-md">
+                      <Link to="/admin" className="flex items-center text-sm px-3 py-2 rounded-md">
                         <Settings className="h-4 w-4 mr-2" />
                         Admin Dashboard
                       </Link>
