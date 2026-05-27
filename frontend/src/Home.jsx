@@ -15,8 +15,8 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Button } from './components/ui/button'; // Adjust path as needed
-import Navbar from './components/navbar';
-import Footer from './components/footer';
+import Navbar from './components/Navbar';
+import Footer from './components/Footer';
 import { useInView } from './hooks/use-in-view'; // Keep this custom hook as-is
 
 // ======================== HERO SECTION ========================
