@@ -1,107 +1,60 @@
-// routes/payment.routes.js
+// backend/routes/payment.routes.js
+"use strict";
+
 const express = require("express");
 const router = express.Router();
 
-const {
-  getExchangeRate,
-  getWallet,
-  initiateTopup,
-  topupStatus,
-  stripeWebhook,
-  fundEscrow,
-  escrowStatus,
-  releaseEscrow,
-  refundEscrow,
-  requestWithdrawal,
-  getPendingWithdrawals,
-  completeWithdrawal,
-  rejectWithdrawal,
-  adminBonus,
-  adminStats,
-} = require("../controllers/payment.controller");
+// ─── Middleware ──────────────────────────────────────────────────────────────
+const { authMiddleware } = require("../middlewares/auth");
+const paymentController = require("../controllers/payment.controller");
 
-const { verifyAuth, restrictTo } = require("../middlewares/authMiddleware");
-
-// ============================================================================
-// 🔔 STRIPE WEBHOOK
-// ⚠️  MUST be registered BEFORE any body-parser middleware runs on this router.
-//     Stripe requires the raw, unparsed request body for signature verification.
-//     express.raw() is applied ONLY to this one route — all others use the
-//     global express.json() already applied in index.js.
-// ============================================================================
+// ─── CORS & Body Parser Setup (for webhooks) ─────────────────────────────────
+// Stripe webhook needs RAW body for signature verification
+// This route MUST be defined BEFORE express.json() middleware runs on it
 router.post(
   "/webhook/stripe",
-  express.raw({ type: "application/json" }),
-  stripeWebhook
+  express.raw({ type: "application/json" }), // ← RAW body for Stripe
+  paymentController.stripeWebhook            // ← Handler function (required!)
 );
 
-// ─── All other payment routes require authentication ──────────────────────────
-router.use(verifyAuth);
+// ─── Authenticated Routes (all require login) ────────────────────────────────
+// Apply auth middleware to all routes below using router.use()
+// ⚠️  MUST pass a function as the second argument!
+router.use(authMiddleware); // ✅ Correct: authMiddleware is a function
 
-// ============================================================================
-// 💱 EXCHANGE RATE
-// ============================================================================
+// ─── Wallet & Exchange ───────────────────────────────────────────────────────
+router.get("/wallet", paymentController.getWallet);
+router.get("/exchange-rate", paymentController.getExchangeRate);
 
-/** GET /payment/exchange-rate — live USD/NPR rate (cached 10 min) */
-router.get("/exchange-rate", getExchangeRate);
+// ─── Top-up (Stripe Embedded Checkout) ───────────────────────────────────────
+router.post("/topup/initiate", paymentController.initiateTopup);
+router.get("/topup/status", paymentController.topupStatus);
 
-// ============================================================================
-// 💳 WALLET
-// ============================================================================
+// ─── PayPal Escrow (Redirect Flow) ───────────────────────────────────────────
+router.post("/escrow/:jobId/initiate-paypal", paymentController.initiatePaypalEscrow);
+router.post("/paypal/complete", paymentController.completePaypalRedirect);
 
-/** GET /payment/wallet — balance + paginated transaction history */
-router.get("/wallet", getWallet);
+// ─── PayPal Escrow (Embedded Buttons Flow) ───────────────────────────────────
+router.post("/escrow/:jobId/create-paypal-order", paymentController.createPaypalOrder);
+router.post("/escrow/:jobId/capture-paypal", paymentController.capturePaypalEscrow);
 
-// ============================================================================
-// 🔝 TOP-UP via STRIPE CHECKOUT
-// ============================================================================
+// ─── Escrow Funding (from Wallet Balance) ────────────────────────────────────
+router.post("/escrow/:jobId/fund", paymentController.fundEscrow);
+router.get("/escrow/:jobId/status", paymentController.escrowStatus);
 
-/** POST /payment/topup/initiate — create Stripe Checkout Session, returns checkoutUrl */
-router.post("/topup/initiate", initiateTopup);
+// ─── Admin Escrow Actions ────────────────────────────────────────────────────
+// These should also check for admin role in the controller
+router.post("/escrow/:jobId/release", paymentController.releaseEscrow);
+router.post("/escrow/:jobId/refund", paymentController.refundEscrow);
 
-/** GET  /payment/topup/status  — poll for webhook fulfillment on the success page */
-router.get("/topup/status", topupStatus);
+// ─── Withdrawals ─────────────────────────────────────────────────────────────
+router.post("/withdraw", paymentController.requestWithdrawal);
+router.get("/withdrawals/pending", paymentController.getPendingWithdrawals);
+router.patch("/admin/withdrawals/:txnId/complete", paymentController.completeWithdrawal);
+router.patch("/admin/withdrawals/:txnId/reject", paymentController.rejectWithdrawal);
 
-// ============================================================================
-// 🔒 ESCROW
-// ============================================================================
-
-/** POST /payment/escrow/:jobId/fund    — client locks funds for a job */
-router.post("/escrow/:jobId/fund", restrictTo("customer"), fundEscrow);
-
-/** GET  /payment/escrow/:jobId/status — audit trail (participant or admin) */
-router.get("/escrow/:jobId/status", escrowStatus);
-
-/** POST /payment/escrow/:jobId/release — admin releases payment to provider */
-router.post("/escrow/:jobId/release", restrictTo("admin"), releaseEscrow);
-
-/** POST /payment/escrow/:jobId/refund  — admin refunds client on cancellation */
-router.post("/escrow/:jobId/refund", restrictTo("admin"), refundEscrow);
-
-// ============================================================================
-// 💸 WITHDRAWALS (provider ↔ admin)
-// ============================================================================
-
-/** POST  /payment/withdraw — provider requests a payout */
-router.post("/withdraw", restrictTo("provider"), requestWithdrawal);
-
-/** GET   /payment/admin/pending-withdrawals — admin queue (FIFO) */
-router.get("/admin/pending-withdrawals", restrictTo("admin"), getPendingWithdrawals);
-
-/** PATCH /payment/admin/withdrawals/:txnId/complete — mark paid externally */
-router.patch("/admin/withdrawals/:txnId/complete", restrictTo("admin"), completeWithdrawal);
-
-/** PATCH /payment/admin/withdrawals/:txnId/reject  — reject & restore balance */
-router.patch("/admin/withdrawals/:txnId/reject", restrictTo("admin"), rejectWithdrawal);
-
-// ============================================================================
-// 🎁 ADMIN UTILITIES
-// ============================================================================
-
-/** POST /payment/admin/bonus — manually credit any user's wallet */
-router.post("/admin/bonus", restrictTo("admin"), adminBonus);
-
-/** GET  /payment/admin/stats — platform-wide financial dashboard */
-router.get("/admin/stats", restrictTo("admin"), adminStats);
+// ─── Admin Utilities ─────────────────────────────────────────────────────────
+router.post("/admin/bonus", paymentController.adminBonus);
+router.get("/admin/stats", paymentController.adminStats);
 
 module.exports = router;

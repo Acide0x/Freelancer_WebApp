@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import api from '../api/api'
-import { useAuth } from '../context/AuthContext'
+import { useAuth } from "@/context/AuthContext"
 
 function getNotificationIcon(type) {
   switch (type) {

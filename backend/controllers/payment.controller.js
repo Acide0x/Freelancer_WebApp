@@ -4,6 +4,7 @@
 const mongoose = require("mongoose");
 const Stripe = require("stripe");
 const axios = require("axios");
+const crypto = require("crypto");
 const { Wallet, Transaction } = require("../models/wallet.model");
 const Job = require("../models/job.model");
 const User = require("../models/user.model");
@@ -12,41 +13,44 @@ const User = require("../models/user.model");
 // ⚙️  CONFIG
 // ============================================================================
 
-const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+const stripe = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
-const PLATFORM_FEE_RATE = parseFloat(process.env.PLATFORM_FEE_RATE ?? "0.10"); // 10 %
+
+// PayPal config (optional - only needed if using PayPal)
+const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID;
+const PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET;
+const PAYPAL_MODE = process.env.PAYPAL_MODE || "sandbox"; // 'sandbox' or 'production'
+const PAYPAL_BASE_URL = PAYPAL_MODE === "production" 
+  ? "https://api-m.paypal.com" 
+  : "https://api-m.sandbox.paypal.com";
+
+const PLATFORM_FEE_RATE = parseFloat(process.env.PLATFORM_FEE_RATE ?? "0.10"); // 10%
 const MIN_TOPUP_NPR = parseFloat(process.env.MIN_TOPUP_NPR ?? "100");
 const MAX_TOPUP_NPR = parseFloat(process.env.MAX_TOPUP_NPR ?? "500000");
 const MIN_WITHDRAW_NPR = parseFloat(process.env.MIN_WITHDRAW_NPR ?? "100");
 const FRONTEND_URL = process.env.FRONTEND_URL ?? "http://localhost:5173";
 const EXCHANGE_RATE_API_KEY = process.env.EXCHANGE_RATE_API_KEY;
+const RETURN_TOKEN_TTL_SECONDS = parseInt(process.env.RETURN_TOKEN_TTL_SECONDS ?? "300"); // 5 min default
 
 // ─── Startup env-var warnings ─────────────────────────────────────────────────
-if (!process.env.STRIPE_SECRET_KEY) console.warn("⚠️  STRIPE_SECRET_KEY not set");
+if (!process.env.STRIPE_SECRET_KEY) console.warn("⚠️  STRIPE_SECRET_KEY not set — Stripe features disabled");
 if (!process.env.STRIPE_WEBHOOK_SECRET) console.warn("⚠️  STRIPE_WEBHOOK_SECRET not set — webhook verification will fail");
+if (!PAYPAL_CLIENT_ID || !PAYPAL_CLIENT_SECRET) console.warn("⚠️  PayPal credentials not set — PayPal features disabled");
 if (!EXCHANGE_RATE_API_KEY) console.warn("⚠️  EXCHANGE_RATE_API_KEY not set — top-ups will use fallback rate of 135 NPR/USD");
 
 // ============================================================================
 // 💱 CURRENCY UTILITIES
 // ============================================================================
 
-// Internal storage: paisa (1 NPR = 100 paisa)
 const rsToPaisa = (rs) => Math.round(parseFloat(rs) * 100);
 const paisaToRs = (paisa) => +(paisa / 100).toFixed(2);
-
-// Stripe charges in USD cents
 const usdToCents = (usd) => Math.round(parseFloat(usd) * 100);
 
 /**
- * getUsdNprRate()
- * Fetches live USD → NPR rate from exchangerate-api.com.
- * Cached for 10 minutes in memory to avoid hitting the free tier limit.
- *
- * Free tier: 1,500 req/month.
- * Get your free key at https://www.exchangerate-api.com
+ * getUsdNprRate() - Cached exchange rate fetcher
  */
-let _rateCache = null; // { rate: Number, fetchedAt: Number }
-const RATE_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+let _rateCache = null;
+const RATE_CACHE_TTL_MS = 10 * 60 * 1000;
 
 const getUsdNprRate = async () => {
   if (_rateCache && (Date.now() - _rateCache.fetchedAt) < RATE_CACHE_TTL_MS) {
@@ -116,6 +120,13 @@ const formatTxn = (txn) => ({
     chargedUsd: txn.stripe.chargedUsd,
     rateUsed: txn.stripe.rateUsed,
   } : undefined,
+  paypal: txn.paypal?.orderId ? {
+    orderId: txn.paypal.orderId,
+    captureId: txn.paypal.captureId,
+    payerId: txn.paypal.payerId,
+    chargedUsd: txn.paypal.chargedUsd,
+    rateUsed: txn.paypal.rateUsed,
+  } : undefined,
   withdrawal: txn.withdrawal?.status ? {
     method: txn.withdrawal.method,
     status: txn.withdrawal.status,
@@ -126,13 +137,81 @@ const formatTxn = (txn) => ({
 });
 
 // ============================================================================
-// 💱 EXCHANGE RATE ENDPOINT
+// 🔐 RETURN TOKEN UTILITIES (for redirect flows)
 // ============================================================================
 
 /**
- * GET /payment/exchange-rate
- * Frontend calls this to show the live rate before the user initiates top-up.
+ * Generate a one-time return token for redirect authentication
+ * Stores in Redis/memory with TTL
  */
+const generateReturnToken = async (payload, ttlSeconds = RETURN_TOKEN_TTL_SECONDS) => {
+  const token = crypto.randomBytes(32).toString("hex");
+  const key = `payment:return:${token}`;
+  
+  // Use Redis if available, fallback to in-memory Map
+  if (global.redisClient) {
+    await global.redisClient.setEx(key, ttlSeconds, JSON.stringify({
+      ...payload,
+      createdAt: Date.now(),
+      used: false,
+    }));
+  } else {
+    // Fallback: in-memory store (NOT production-safe for multi-server)
+    if (!global._returnTokenStore) global._returnTokenStore = new Map();
+    global._returnTokenStore.set(key, {
+      data: { ...payload, createdAt: Date.now(), used: false },
+      expiresAt: Date.now() + ttlSeconds * 1000,
+    });
+    // Cleanup expired tokens periodically
+    if (!global._returnTokenCleanup) {
+      global._returnTokenCleanup = setInterval(() => {
+        const now = Date.now();
+        for (const [k, v] of global._returnTokenStore.entries()) {
+          if (v.expiresAt < now) global._returnTokenStore.delete(k);
+        }
+      }, 60000);
+    }
+  }
+  
+  return token;
+};
+
+/**
+ * Validate and consume a return token (one-time use)
+ */
+const consumeReturnToken = async (token) => {
+  const key = `payment:return:${token}`;
+  
+  if (global.redisClient) {
+    const raw = await global.redisClient.get(key);
+    if (!raw) return null;
+    
+    const data = JSON.parse(raw);
+    if (data.used) return null; // Already consumed
+    
+    // Mark as used and delete after short delay for idempotency
+    await global.redisClient.setEx(key, 60, JSON.stringify({ ...data, used: true }));
+    setTimeout(() => global.redisClient.del(key), 60000);
+    
+    return data;
+  } else {
+    // Fallback: in-memory
+    if (!global._returnTokenStore) return null;
+    const entry = global._returnTokenStore.get(key);
+    if (!entry || entry.expiresAt < Date.now() || entry.data.used) return null;
+    
+    entry.data.used = true;
+    // Don't delete immediately — allow brief idempotency window
+    setTimeout(() => global._returnTokenStore.delete(key), 60000);
+    
+    return entry.data;
+  }
+};
+
+// ============================================================================
+// 💱 EXCHANGE RATE ENDPOINT
+// ============================================================================
+
 exports.getExchangeRate = async (req, res) => {
   try {
     const rate = await getUsdNprRate();
@@ -150,10 +229,6 @@ exports.getExchangeRate = async (req, res) => {
 // 💳 WALLET
 // ============================================================================
 
-/**
- * GET /payment/wallet
- * Returns NPR balance + paginated transaction history.
- */
 exports.getWallet = async (req, res) => {
   try {
     const wallet = await getOrCreateWallet(req.user.id);
@@ -194,29 +269,18 @@ exports.getWallet = async (req, res) => {
 };
 
 // ============================================================================
-// 🔝 TOP-UP via STRIPE CHECKOUT
+// 🔝 TOP-UP via STRIPE CHECKOUT (Embedded — No Redirect)
 // ============================================================================
 
-/**
- * POST /payment/topup/initiate
- * Body: { amountNpr }  — user types NPR e.g. 1000
- *
- * Flow:
- *   1. Validate NPR amount
- *   2. Fetch live USD/NPR rate
- *   3. Convert NPR → USD for Stripe (min $0.50)
- *   4. Create Stripe Checkout Session charged in USD
- *   5. Store pending transaction with NPR paisa as source of truth
- *   6. Return checkoutUrl + conversion summary for the UI
- *
- * Wallet is credited in NPR paisa by the webhook when Stripe confirms.
- * The rate used at initiation is locked in metadata — no drift on verify.
- */
 exports.initiateTopup = async (req, res) => {
   try {
-    const { amountNpr } = req.body;
+    if (!stripe) {
+      return fail(res, 503, "Stripe is not configured on this server");
+    }
 
+    const { amountNpr } = req.body;
     const amountNprNum = parseFloat(amountNpr);
+    
     if (isNaN(amountNprNum) || amountNprNum < MIN_TOPUP_NPR || amountNprNum > MAX_TOPUP_NPR) {
       return fail(res, 400, `Amount must be between Rs ${MIN_TOPUP_NPR} and Rs ${MAX_TOPUP_NPR.toLocaleString()}`);
     }
@@ -224,28 +288,21 @@ exports.initiateTopup = async (req, res) => {
     const user = await User.findById(req.user.id).select("fullName email");
     if (!user) return fail(res, 404, "User not found");
 
-    // Fetch live rate
     const usdNprRate = await getUsdNprRate();
-
-    // Convert NPR → USD
     const amountUsd = +(amountNprNum / usdNprRate).toFixed(2);
 
-    // Stripe minimum is $0.50
     if (amountUsd < 0.50) {
       const minNpr = Math.ceil(0.50 * usdNprRate);
       return fail(res, 400, `Amount too small. Minimum top-up is Rs ${minNpr} at current rate.`);
     }
 
-    const amountPaisa = rsToPaisa(amountNprNum); // ← what gets credited to wallet
-    const stripeCents = usdToCents(amountUsd);   // ← what Stripe charges
-
+    const amountPaisa = rsToPaisa(amountNprNum);
+    const stripeCents = usdToCents(amountUsd);
     const wallet = await getOrCreateWallet(req.user.id);
 
-    // Create Stripe Checkout Session (embedded — user never leaves the page)
     const session = await stripe.checkout.sessions.create({
-
       mode: "payment",
-      ui_mode: "embedded_page",                      // ← renders inside your app
+      ui_mode: "embedded_page",
       customer_email: user.email,
       line_items: [{
         price_data: {
@@ -258,8 +315,6 @@ exports.initiateTopup = async (req, res) => {
         },
         quantity: 1,
       }],
-      // ⚠️  amountPaisa in metadata is the source of truth for crediting.
-      //     Never use Stripe's amount_total for crediting the wallet.
       metadata: {
         userId: req.user.id.toString(),
         walletId: wallet._id.toString(),
@@ -269,21 +324,17 @@ exports.initiateTopup = async (req, res) => {
         rateUsed: usdNprRate.toString(),
         type: "topup",
       },
-      // return_url replaces success_url / cancel_url for embedded mode.
-      // Stripe appends ?session_id={CHECKOUT_SESSION_ID} automatically.
       return_url: `${FRONTEND_URL}/wallet?session_id={CHECKOUT_SESSION_ID}`,
-
     });
 
-    // Store pending transaction — webhook patches it to "completed"
     await Transaction.create([{
       wallet: wallet._id,
       user: req.user.id,
       type: "topup",
       direction: "credit",
       amount: amountPaisa,
-      balanceBefore: 0, // patched by webhook
-      balanceAfter: 0, // patched by webhook
+      balanceBefore: 0,
+      balanceAfter: 0,
       status: "pending",
       stripe: {
         sessionId: session.id,
@@ -296,14 +347,16 @@ exports.initiateTopup = async (req, res) => {
     }]);
 
     return ok(res, 200, {
-      // clientSecret is what @stripe/react-stripe-js EmbeddedCheckout needs.
-      // sessionId is kept for the /topup/status polling endpoint.
       clientSecret: session.client_secret,
       sessionId: session.id,
       amountNpr: amountNprNum,
       chargedUsd: amountUsd,
       rateUsed: usdNprRate,
       summary: `Rs ${amountNprNum.toLocaleString()} ≈ $${amountUsd} USD (1 USD = Rs ${usdNprRate})`,
+      // Include session backup hint for frontend
+      sessionBackup: {
+        hint: "Backup auth to sessionStorage before payment for redirect resilience",
+      },
     });
   } catch (err) {
     console.error("❌ initiateTopup:", err?.message ?? err);
@@ -312,13 +365,6 @@ exports.initiateTopup = async (req, res) => {
   }
 };
 
-/**
- * GET /payment/topup/status
- * Query: { session_id }
- *
- * Polled by the frontend on the success page while waiting for webhook.
- * Read-only — no side effects, safe to poll every 2 seconds.
- */
 exports.topupStatus = async (req, res) => {
   try {
     const { session_id } = req.query;
@@ -332,7 +378,7 @@ exports.topupStatus = async (req, res) => {
     if (!txn) return fail(res, 404, "Payment record not found");
 
     return ok(res, 200, {
-      status: txn.status,           // "pending" | "completed" | "failed"
+      status: txn.status,
       amountNpr: paisaToRs(txn.amount),
       chargedUsd: txn.stripe?.chargedUsd,
       rateUsed: txn.stripe?.rateUsed,
@@ -345,20 +391,570 @@ exports.topupStatus = async (req, res) => {
 };
 
 // ============================================================================
-// 🔔 STRIPE WEBHOOK
+// 🅿️ PAYPAL INTEGRATION (Redirect Flow with Token Preservation)
 // ============================================================================
 
 /**
- * POST /payment/webhook/stripe
- *
- * ⚠️  Must receive RAW body (Buffer). Registered with express.raw() in routes.
- *
- * Handled events:
- *   checkout.session.completed     → credit wallet in NPR paisa (from metadata)
- *   checkout.session.expired       → mark transaction failed
- *   payment_intent.payment_failed  → mark transaction failed (card decline, etc.)
+ * POST /payment/escrow/:jobId/initiate-paypal
+ * Initiates PayPal redirect flow for escrow funding
+ * Returns one-time returnToken for auth restoration
  */
+exports.initiatePaypalEscrow = async (req, res) => {
+  try {
+    if (!PAYPAL_CLIENT_ID || !PAYPAL_CLIENT_SECRET) {
+      return fail(res, 503, "PayPal is not configured on this server");
+    }
+
+    const { jobId } = req.params;
+    const { amount, returnUrl, cancelUrl } = req.body;
+    
+    if (!mongoose.Types.ObjectId.isValid(jobId)) {
+      return fail(res, 400, "Invalid job ID");
+    }
+
+    const amountNum = parseFloat(amount);
+    if (isNaN(amountNum) || amountNum < 100) {
+      return fail(res, 400, "Invalid amount");
+    }
+
+    // Validate job
+    const job = await Job.findOne({ _id: jobId, isDeleted: { $ne: true } });
+    if (!job) return fail(res, 404, "Job not found");
+    if (job.client.toString() !== req.user.id) {
+      return fail(res, 403, "Only the job client can fund escrow");
+    }
+    if (!["in_progress", "pending_provider_acceptance"].includes(job.status)) {
+      return fail(res, 400, `Cannot fund escrow when job status is '${job.status}'`);
+    }
+    if (job.escrow?.funded) {
+      return ok(res, 200, { message: "Escrow already funded", alreadyFunded: true });
+    }
+
+    // Get PayPal access token
+    const auth = Buffer.from(`${PAYPAL_CLIENT_ID}:${PAYPAL_CLIENT_SECRET}`).toString("base64");
+    const authRes = await axios.post(
+      `${PAYPAL_BASE_URL}/v1/oauth2/token`,
+      "grant_type=client_credentials",
+      {
+        headers: {
+          "Authorization": `Basic ${auth}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+      }
+    );
+    const accessToken = authRes.data.access_token;
+
+    // Create PayPal order
+    const amountUsd = +(amountNum / (await getUsdNprRate())).toFixed(2);
+    const orderRes = await axios.post(
+      `${PAYPAL_BASE_URL}/v2/checkout/orders`,
+      {
+        intent: "CAPTURE",
+        purchase_units: [{
+          amount: {
+            currency_code: "USD",
+            value: amountUsd.toFixed(2),
+          },
+          description: `Escrow for job: ${job.title}`,
+          custom_id: jobId,
+        }],
+        application_context: {
+          brand_name: "YourApp",
+          locale: "en-US",
+          shipping_preference: "NO_SHIPPING",
+          user_action: "PAY_NOW",
+          return_url: `${returnUrl}?state={RETURN_TOKEN}`, // Placeholder — we'll replace
+          cancel_url: cancelUrl || returnUrl,
+        },
+      },
+      {
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "PayPal-Request-Id": crypto.randomBytes(16).toString("hex"), // Idempotency
+        },
+      }
+    );
+
+    const order = orderRes.data;
+    const approveLink = order.links.find(l => l.rel === "approve")?.href;
+    if (!approveLink) throw new Error("No approve link in PayPal response");
+
+    // Generate one-time return token with job context
+    const returnToken = await generateReturnToken({
+      userId: req.user.id,
+      jobId: job._id.toString(),
+      amountNpr: amountNum,
+      amountUsd,
+      paypalOrderId: order.id,
+      createdAt: Date.now(),
+    }, RETURN_TOKEN_TTL_SECONDS);
+
+    // Store pending transaction
+    await Transaction.create([{
+      wallet: (await getOrCreateWallet(req.user.id))._id,
+      user: req.user.id,
+      type: "escrow_lock",
+      direction: "debit",
+      amount: rsToPaisa(amountNum),
+      balanceBefore: 0,
+      balanceAfter: 0,
+      status: "pending_paypal",
+      job: job._id,
+      paypal: {
+        orderId: order.id,
+        chargedUsd: amountUsd,
+        rateUsed: await getUsdNprRate(),
+      },
+      note: `PayPal escrow funding for job: ${job.title} (Rs ${amountNum})`,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent"),
+    }]);
+
+    // Replace placeholder with actual return token in URL
+    const paypalUrl = approveLink.replace("{RETURN_TOKEN}", returnToken);
+
+    return ok(res, 200, {
+      success: true,
+      paypalUrl,
+      returnToken, // Frontend stores this for verification on return
+      orderId: order.id,
+      amountNpr: amountNum,
+      amountUsd,
+      sessionBackup: {
+        hint: "Backup auth to sessionStorage before redirect",
+        token: returnToken.slice(0, 8) + "…", // Partial for debugging
+      },
+    });
+
+  } catch (err) {
+    console.error("❌ initiatePaypalEscrow:", err?.response?.data ?? err?.message ?? err);
+    return fail(res, 500, "Failed to initiate PayPal payment", 
+      err?.response?.data?.message ?? err?.message);
+  }
+};
+
+/**
+ * POST /payment/escrow/:jobId/create-paypal-order
+ * For embedded PayPal buttons flow (no redirect)
+ */
+exports.createPaypalOrder = async (req, res) => {
+  try {
+    if (!PAYPAL_CLIENT_ID || !PAYPAL_CLIENT_SECRET) {
+      return fail(res, 503, "PayPal is not configured");
+    }
+
+    const { jobId } = req.params;
+    const { amount } = req.body;
+    
+    if (!mongoose.Types.ObjectId.isValid(jobId)) {
+      return fail(res, 400, "Invalid job ID");
+    }
+
+    const amountNum = parseFloat(amount);
+    if (isNaN(amountNum) || amountNum < 100) {
+      return fail(res, 400, "Invalid amount");
+    }
+
+    const job = await Job.findOne({ _id: jobId, isDeleted: { $ne: true } });
+    if (!job || job.client.toString() !== req.user.id) {
+      return fail(res, 403, "Unauthorized");
+    }
+
+    // Get PayPal access token
+    const auth = Buffer.from(`${PAYPAL_CLIENT_ID}:${PAYPAL_CLIENT_SECRET}`).toString("base64");
+    const authRes = await axios.post(
+      `${PAYPAL_BASE_URL}/v1/oauth2/token`,
+      "grant_type=client_credentials",
+      {
+        headers: {
+          "Authorization": `Basic ${auth}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+      }
+    );
+    const accessToken = authRes.data.access_token;
+
+    const amountUsd = +(amountNum / (await getUsdNprRate())).toFixed(2);
+    
+    const orderRes = await axios.post(
+      `${PAYPAL_BASE_URL}/v2/checkout/orders`,
+      {
+        intent: "CAPTURE",
+        purchase_units: [{
+          amount: {
+            currency_code: "USD",
+            value: amountUsd.toFixed(2),
+          },
+          description: `Escrow for job: ${job.title}`,
+          custom_id: jobId,
+        }],
+        application_context: {
+          brand_name: "YourApp",
+          locale: "en-US",
+          shipping_preference: "NO_SHIPPING",
+          user_action: "PAY_NOW",
+        },
+      },
+      {
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "PayPal-Request-Id": crypto.randomBytes(16).toString("hex"),
+        },
+      }
+    );
+
+    return ok(res, 200, {
+      success: true,
+      orderId: orderRes.data.id,
+      amountNpr: amountNum,
+      amountUsd,
+    });
+
+  } catch (err) {
+    console.error("❌ createPaypalOrder:", err?.response?.data ?? err?.message);
+    return fail(res, 500, "Failed to create PayPal order",
+      err?.response?.data?.message ?? err?.message);
+  }
+};
+
+/**
+ * POST /payment/escrow/:jobId/capture-paypal
+ * Captures PayPal payment for embedded flow, then funds escrow
+ */
+exports.capturePaypalEscrow = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    if (!PAYPAL_CLIENT_ID || !PAYPAL_CLIENT_SECRET) {
+      await session.abortTransaction();
+      return fail(res, 503, "PayPal is not configured");
+    }
+
+    const { jobId } = req.params;
+    const { orderId, paypalOrderId } = req.body;
+    
+    if (!mongoose.Types.ObjectId.isValid(jobId)) {
+      await session.abortTransaction();
+      return fail(res, 400, "Invalid job ID");
+    }
+
+    // Validate job
+    const job = await Job.findOne({ _id: jobId, isDeleted: { $ne: true } }).session(session);
+    if (!job || job.client.toString() !== req.user.id) {
+      await session.abortTransaction();
+      return fail(res, 403, "Unauthorized");
+    }
+    if (job.escrow?.funded) {
+      await session.abortTransaction();
+      return ok(res, 200, { message: "Escrow already funded", alreadyFunded: true });
+    }
+
+    // Get PayPal access token
+    const auth = Buffer.from(`${PAYPAL_CLIENT_ID}:${PAYPAL_CLIENT_SECRET}`).toString("base64");
+    const authRes = await axios.post(
+      `${PAYPAL_BASE_URL}/v1/oauth2/token`,
+      "grant_type=client_credentials",
+      {
+        headers: {
+          "Authorization": `Basic ${auth}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+      }
+    );
+    const accessToken = authRes.data.access_token;
+
+    // Capture the payment
+    const captureRes = await axios.post(
+      `${PAYPAL_BASE_URL}/v2/checkout/orders/${paypalOrderId}/capture`,
+      {},
+      {
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "PayPal-Request-Id": crypto.randomBytes(16).toString("hex"),
+        },
+      }
+    );
+
+    const capture = captureRes.data;
+    if (capture.status !== "COMPLETED") {
+      await session.abortTransaction();
+      return fail(res, 400, `PayPal payment status: ${capture.status}`);
+    }
+
+    // Find and update the pending transaction
+    const txn = await Transaction.findOne({
+      "paypal.orderId": orderId,
+      status: "pending_paypal",
+      user: req.user.id,
+    }).session(session);
+
+    if (!txn) {
+      await session.abortTransaction();
+      return fail(res, 404, "Transaction not found");
+    }
+
+    // Fund escrow (reuse fundEscrow logic inline for atomicity)
+    const amountPaisa = txn.amount;
+    const wallet = await Wallet.findOne({ user: req.user.id }).session(session);
+    
+    if (!wallet || wallet.balance < amountPaisa) {
+      await session.abortTransaction();
+      return fail(res, 400, "Insufficient wallet balance");
+    }
+
+    const balBefore = wallet.balance;
+    wallet.balance -= amountPaisa;
+    wallet.lockedBalance += amountPaisa;
+    wallet.totalSpent += amountPaisa;
+    wallet.incrementVersion();
+    await wallet.save({ session });
+
+    // Update transaction to completed
+    txn.status = "completed";
+    txn.balanceBefore = balBefore;
+    txn.balanceAfter = wallet.balance;
+    txn.paypal.captureId = capture.id;
+    txn.paypal.payerId = capture.payer?.payer_id;
+    await txn.save({ session });
+
+    // Update job
+    job.escrow.funded = true;
+    job.escrow.fundedAt = new Date();
+    job.status = "escrow_funded";
+    await job.save({ session });
+
+    // Platform fee to admin
+    const feePaisa = Math.floor(amountPaisa * PLATFORM_FEE_RATE);
+    if (feePaisa > 0) {
+      const adminUser = await User.findOne({ role: "admin" }).session(session);
+      if (adminUser) {
+        const adminWallet = await getOrCreateWallet(adminUser._id, session);
+        const adminBalBefore = adminWallet.balance;
+        adminWallet.balance += feePaisa;
+        adminWallet.totalEarned += feePaisa;
+        adminWallet.incrementVersion();
+        await adminWallet.save({ session });
+
+        await recordTransaction({
+          wallet: adminWallet._id,
+          user: adminUser._id,
+          type: "platform_fee",
+          direction: "credit",
+          amount: feePaisa,
+          balanceBefore: adminBalBefore,
+          balanceAfter: adminWallet.balance,
+          job: job._id,
+          note: `Platform fee from PayPal escrow: ${job.title}`,
+        }, session);
+      }
+    }
+
+    await session.commitTransaction();
+
+    return ok(res, 200, {
+      success: true,
+      message: "Escrow funded via PayPal",
+      captureId: capture.id,
+      amountNpr: paisaToRs(amountPaisa),
+      job: { _id: job._id, status: job.status, escrow: { funded: true } },
+    });
+
+  } catch (err) {
+    await session.abortTransaction();
+    console.error("❌ capturePaypalEscrow:", err?.response?.data ?? err?.message);
+    return fail(res, 500, "Failed to capture PayPal payment",
+      err?.response?.data?.message ?? err?.message);
+  } finally {
+    session.endSession();
+  }
+};
+
+/**
+ * POST /payment/paypal/complete
+ * Handles return from PayPal redirect flow
+ * Validates returnToken, captures payment, funds escrow
+ */
+exports.completePaypalRedirect = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { paypalToken, payerId, returnToken } = req.body;
+    
+    if (!paypalToken || !payerId || !returnToken) {
+      await session.abortTransaction();
+      return fail(res, 400, "Missing required parameters");
+    }
+
+    // Validate and consume return token
+    const tokenData = await consumeReturnToken(returnToken);
+    if (!tokenData) {
+      await session.abortTransaction();
+      return fail(res, 400, "Invalid or expired session. Please try again.");
+    }
+
+    // Security: Ensure authenticated user matches token's user
+    if (tokenData.userId !== req.user.id) {
+      await session.abortTransaction();
+      return fail(res, 403, "Unauthorized");
+    }
+
+    // Validate job
+    const job = await Job.findOne({ 
+      _id: tokenData.jobId, 
+      isDeleted: { $ne: true } 
+    }).session(session);
+    
+    if (!job || job.client.toString() !== req.user.id) {
+      await session.abortTransaction();
+      return fail(res, 404, "Job not found");
+    }
+    if (job.escrow?.funded) {
+      await session.abortTransaction();
+      return ok(res, 200, { message: "Escrow already funded", alreadyFunded: true });
+    }
+
+    // Get PayPal access token
+    const auth = Buffer.from(`${PAYPAL_CLIENT_ID}:${PAYPAL_CLIENT_SECRET}`).toString("base64");
+    const authRes = await axios.post(
+      `${PAYPAL_BASE_URL}/v1/oauth2/token`,
+      "grant_type=client_credentials",
+      {
+        headers: {
+          "Authorization": `Basic ${auth}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+      }
+    );
+    const accessToken = authRes.data.access_token;
+
+    // Capture the payment
+    const captureRes = await axios.post(
+      `${PAYPAL_BASE_URL}/v2/checkout/orders/${tokenData.paypalOrderId}/capture`,
+      {},
+      {
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    const capture = captureRes.data;
+    if (capture.status !== "COMPLETED") {
+      await session.abortTransaction();
+      return fail(res, 400, `Payment status: ${capture.status}`);
+    }
+
+    // Find pending transaction
+    const txn = await Transaction.findOne({
+      "paypal.orderId": tokenData.paypalOrderId,
+      status: "pending_paypal",
+      user: req.user.id,
+    }).session(session);
+
+    if (!txn) {
+      await session.abortTransaction();
+      return fail(res, 404, "Transaction not found");
+    }
+
+    // Fund escrow
+    const amountPaisa = txn.amount;
+    const wallet = await Wallet.findOne({ user: req.user.id }).session(session);
+    
+    if (!wallet || wallet.balance < amountPaisa) {
+      await session.abortTransaction();
+      return fail(res, 400, "Insufficient balance");
+    }
+
+    const balBefore = wallet.balance;
+    wallet.balance -= amountPaisa;
+    wallet.lockedBalance += amountPaisa;
+    wallet.totalSpent += amountPaisa;
+    wallet.incrementVersion();
+    await wallet.save({ session });
+
+    txn.status = "completed";
+    txn.balanceBefore = balBefore;
+    txn.balanceAfter = wallet.balance;
+    txn.paypal.captureId = capture.id;
+    txn.paypal.payerId = payerId;
+    await txn.save({ session });
+
+    job.escrow.funded = true;
+    job.escrow.fundedAt = new Date();
+    job.status = "escrow_funded";
+    await job.save({ session });
+
+    // Platform fee
+    const feePaisa = Math.floor(amountPaisa * PLATFORM_FEE_RATE);
+    if (feePaisa > 0) {
+      const adminUser = await User.findOne({ role: "admin" }).session(session);
+      if (adminUser) {
+        const adminWallet = await getOrCreateWallet(adminUser._id, session);
+        const adminBalBefore = adminWallet.balance;
+        adminWallet.balance += feePaisa;
+        adminWallet.totalEarned += feePaisa;
+        adminWallet.incrementVersion();
+        await adminWallet.save({ session });
+
+        await recordTransaction({
+          wallet: adminWallet._id,
+          user: adminUser._id,
+          type: "platform_fee",
+          direction: "credit",
+          amount: feePaisa,
+          balanceBefore: adminBalBefore,
+          balanceAfter: adminWallet.balance,
+          job: job._id,
+          note: `Platform fee from PayPal: ${job.title}`,
+        }, session);
+      }
+    }
+
+    await session.commitTransaction();
+
+    // Generate fresh auth token for frontend restoration (optional but recommended)
+    const freshToken = req.app.locals?.generateJwt 
+      ? req.app.locals.generateJwt({ userId: req.user.id })
+      : null;
+
+    return ok(res, 200, {
+      success: true,
+      message: "Escrow funded successfully",
+      captureId: capture.id,
+      amountNpr: paisaToRs(amountPaisa),
+      job: { _id: job._id, status: job.status, escrow: { funded: true } },
+      // Include fresh token if generated (frontend will restore to localStorage)
+      ...(freshToken && { 
+        token: freshToken,
+        user: await User.findById(req.user.id).select("-password -__v")
+      }),
+    });
+
+  } catch (err) {
+    await session.abortTransaction();
+    console.error("❌ completePaypalRedirect:", err?.response?.data ?? err?.message);
+    return fail(res, 500, "Failed to complete PayPal payment",
+      err?.response?.data?.message ?? err?.message);
+  } finally {
+    session.endSession();
+  }
+};
+
+// ============================================================================
+// 🔔 STRIPE WEBHOOK
+// ============================================================================
+
 exports.stripeWebhook = async (req, res) => {
+  if (!stripe) {
+    return res.status(503).send("Stripe not configured");
+  }
+
   const sig = req.headers["stripe-signature"];
 
   let event;
@@ -378,13 +974,12 @@ exports.stripeWebhook = async (req, res) => {
     }
 
     const { userId, amountPaisa } = stripeSession.metadata;
-    const creditAmount = parseInt(amountPaisa, 10); // NPR paisa — source of truth
+    const creditAmount = parseInt(amountPaisa, 10);
 
     const mongoSession = await mongoose.startSession();
     mongoSession.startTransaction();
 
     try {
-      // Idempotency — Stripe can fire webhooks more than once
       const alreadyDone = await Transaction.findOne({
         "stripe.sessionId": stripeSession.id,
         status: "completed",
@@ -395,7 +990,6 @@ exports.stripeWebhook = async (req, res) => {
         return res.json({ received: true });
       }
 
-      // Credit wallet in NPR paisa
       const wallet = await getOrCreateWallet(userId, mongoSession);
       const balBefore = wallet.balance;
 
@@ -403,7 +997,6 @@ exports.stripeWebhook = async (req, res) => {
       wallet.incrementVersion();
       await wallet.save({ session: mongoSession });
 
-      // Patch pending transaction → completed
       await Transaction.findOneAndUpdate(
         { "stripe.sessionId": stripeSession.id, status: "pending" },
         {
@@ -416,11 +1009,11 @@ exports.stripeWebhook = async (req, res) => {
       );
 
       await mongoSession.commitTransaction();
-      console.log(` Wallet credited Rs ${paisaToRs(creditAmount)} for user ${userId}`);
+      console.log(`✅ Wallet credited Rs ${paisaToRs(creditAmount)} for user ${userId}`);
     } catch (err) {
       await mongoSession.abortTransaction();
       console.error("❌ stripeWebhook credit failed:", err);
-      return res.status(500).send("Webhook processing failed"); // Stripe will retry
+      return res.status(500).send("Webhook processing failed");
     } finally {
       mongoSession.endSession();
     }
@@ -436,8 +1029,6 @@ exports.stripeWebhook = async (req, res) => {
   }
 
   // ── payment_intent.payment_failed ─────────────────────────────────────────
-  // Fired when a card is declined or payment fails after the session opens.
-  // Marks the pending transaction as failed so it doesn't stay stuck forever.
   if (event.type === "payment_intent.payment_failed") {
     const pi = event.data.object;
     const failReason = pi.last_payment_error?.message ?? "Payment failed";
@@ -447,12 +1038,11 @@ exports.stripeWebhook = async (req, res) => {
       { status: "failed", note: `Stripe payment failed: ${failReason}` }
     ).catch(err => console.error("❌ Failed to mark failed payment_intent:", err));
 
-    // Also try matching by sessionId if paymentIntentId wasn't stored yet
     if (pi.metadata?.sessionId) {
       await Transaction.findOneAndUpdate(
         { "stripe.sessionId": pi.metadata.sessionId, status: "pending" },
         { status: "failed", note: `Stripe payment failed: ${failReason}` }
-      ).catch(() => { }); // silent — may already be updated above
+      ).catch(() => {});
     }
 
     console.warn(`⚠️  Payment failed for PaymentIntent ${pi.id}: ${failReason}`);
@@ -462,20 +1052,9 @@ exports.stripeWebhook = async (req, res) => {
 };
 
 // ============================================================================
-// 🔒 ESCROW — FUND
+// 🔒 ESCROW — FUND (Wallet Balance)
 // ============================================================================
 
-/**
- * POST /payment/escrow/:jobId/fund
- * Client locks NPR funds for a job. job.escrow.amount is treated as NPR.
- *
- * Guards:
- *   - KYC must be verified
- *   - Caller must be the job client
- *   - Job must be in_progress or pending_provider_acceptance
- *   - Escrow must not already be funded
- *   - Client wallet must have sufficient balance
- */
 exports.fundEscrow = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -484,7 +1063,6 @@ exports.fundEscrow = async (req, res) => {
     const { jobId } = req.params;
     if (!mongoose.Types.ObjectId.isValid(jobId)) return fail(res, 400, "Invalid job ID");
 
-    // ── KYC gate ──────────────────────────────────────────────────────────────
     const caller = await User.findById(req.user.id).select("kycVerified").session(session);
     if (!caller?.kycVerified) {
       await session.abortTransaction();
@@ -544,7 +1122,6 @@ exports.fundEscrow = async (req, res) => {
     job.status = "escrow_funded";
     await job.save({ session });
 
-    // ── Credit admin wallet with platform fee ─────────────────────────────────
     const feePaisa = Math.floor(amountPaisa * PLATFORM_FEE_RATE);
     const adminUser = await User.findOne({ role: "admin" }).select("_id").session(session);
     if (adminUser && feePaisa > 0) {
@@ -814,26 +1391,14 @@ exports.refundEscrow = async (req, res) => {
 };
 
 // ============================================================================
-// 💸 WITHDRAWALS (Provider → External)
+// 💸 WITHDRAWALS
 // ============================================================================
 
-/**
- * POST /payment/withdraw
- * Body: { amountNpr, method, accountDetails }
- * Methods: bank | esewa | khalti | cash
- *
- * Guards:
- *   - KYC must be verified
- *   - Provider must have sufficient balance
- *
- * Withdrawals are manual — admin pays out externally, marks complete in dashboard.
- */
 exports.requestWithdrawal = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    // ── KYC gate ──────────────────────────────────────────────────────────────
     const caller = await User.findById(req.user.id).select("kycVerified").session(session);
     if (!caller?.kycVerified) {
       await session.abortTransaction();
@@ -842,7 +1407,6 @@ exports.requestWithdrawal = async (req, res) => {
 
     const { amountNpr, method, accountDetails } = req.body;
 
-    // ⚠️  Must stay in sync with the withdrawal.method enum in wallet.model.js
     const VALID_METHODS = ["bank", "esewa", "khalti", "cash"];
     if (!VALID_METHODS.includes(method)) {
       await session.abortTransaction();
@@ -938,11 +1502,6 @@ exports.getPendingWithdrawals = async (req, res) => {
   }
 };
 
-/**
- * PATCH /payment/admin/withdrawals/:txnId/complete
- * Marks a withdrawal as completed inside a MongoDB transaction so the
- * status update is atomic and can be safely retried.
- */
 exports.completeWithdrawal = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -1109,7 +1668,6 @@ exports.adminStats = async (req, res) => {
         { $match: { type: "withdrawal", "withdrawal.status": "pending" } },
         { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$amount" } } },
       ]),
-      // Pending top-ups: Stripe sessions initiated but webhook not yet received
       Transaction.aggregate([
         { $match: { type: "topup", status: "pending" } },
         { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$amount" } } },

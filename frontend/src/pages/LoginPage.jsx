@@ -1,3 +1,4 @@
+// frontend/src/pages/LoginPage.jsx
 "use client"
 
 import { useState, useEffect } from "react"
@@ -20,10 +21,21 @@ const LoginPage = () => {
   const navigate = useNavigate()
   const location = useLocation()
 
+  // Check if already logged in on mount
   useEffect(() => {
-    const userData = localStorage.getItem("user")
-    if (userData) {
-      navigate(location.state?.from?.pathname || "/", { replace: true })
+    const token = localStorage.getItem("token")
+    const userStr = localStorage.getItem("user")
+    
+    if (token && userStr) {
+      try {
+        const user = JSON.parse(userStr)
+        console.log("✅ Already authenticated, redirecting:", user.email)
+        navigate(location.state?.from?.pathname || "/", { replace: true })
+      } catch (e) {
+        console.warn("⚠️  Invalid user data in localStorage, clearing")
+        localStorage.removeItem("token")
+        localStorage.removeItem("user")
+      }
     }
   }, [navigate, location])
 
@@ -46,7 +58,10 @@ const LoginPage = () => {
   const handleChange = (e) => {
     const { name, value } = e.target
     setFormData({ ...formData, [name]: value })
-    validateField(name, value)
+    // Clear error when user types
+    if (fieldErrors[name]) {
+      setFieldErrors((prev) => ({ ...prev, [name]: "" }))
+    }
   }
 
   const handleSubmit = async (e) => {
@@ -63,24 +78,52 @@ const LoginPage = () => {
     setIsLoading(true)
 
     try {
+      console.log("🔐 Attempting login:", { email: formData.email })
+      
+      // ✅ This calls POST /api/users/login (matches your backend)
       const response = await api.post("/users/login", formData)
       const { token, user } = response.data
 
+      console.log("✅ Login successful, saving auth:", { 
+        hasToken: !!token, 
+        userId: user?._id,
+        role: user?.role 
+      })
+
+      // ✅ Save with exact keys that api.js interceptor expects
       localStorage.setItem("token", token)
       localStorage.setItem("user", JSON.stringify(user))
 
+      // Clear form
       setFormData({ email: "", password: "" })
       setFieldErrors({})
 
-      toast.success(`Welcome back, ${user.name}!`)
+      toast.success(`Welcome back, ${user.fullName || user.name || user.email}!`)
+      
+      // Redirect
       const from = location.state?.from?.pathname || "/"
+      console.log("🧭 Redirecting to:", from)
       navigate(from, { replace: true })
+      
     } catch (error) {
+      console.error("❌ Login failed:", {
+        status: error.response?.status,
+        message: error.response?.data?.message,
+        fullError: error.message,
+      })
+      
       const message =
         error.response?.data?.message ||
         error.message ||
-        "Login failed. Please try again."
+        "Login failed. Please check your credentials."
+      
       toast.error(message)
+      
+      // Clear any partial auth data on failure
+      if (error.response?.status === 401) {
+        localStorage.removeItem("token")
+        localStorage.removeItem("user")
+      }
     } finally {
       setIsLoading(false)
     }

@@ -24,12 +24,17 @@ const api = axios.create({
 api.interceptors.request.use(
   (config) => {
     // Skip token attachment for public endpoints
+    // ✅ UPDATED: Match your backend's user.routes.js paths
     const publicEndpoints = [
-      '/auth/login',
-      '/auth/register', 
-      '/auth/forgot-password',
-      '/auth/reset-password',
-      '/users/public',
+      '/users/login',              // ← Changed from /auth/login
+      '/users/signup',             // ← Changed from /auth/register
+      '/users/forgot-password',    // ← If you have this route
+      '/users/reset-password',     // ← If you have this route
+      '/users/providers',          // ← Public provider list
+      '/users/providers/',         // ← Public provider detail (with ID)
+      '/health',                   // ← Health check
+      '/payment/webhook/stripe',   // ← Stripe webhook (public)
+      '/payment/webhook/paypal',   // ← PayPal webhook (public)
     ]
     
     const isPublic = publicEndpoints.some(endpoint => 
@@ -120,8 +125,10 @@ api.interceptors.response.use(
     const data = response?.data
     const url = config?.url
     
-    // Don't spam console for expected auth errors during login flow
-    const isAuthEndpoint = url?.includes('/auth/') || url?.includes('/users/profile')
+    // ✅ UPDATED: Match your backend's auth endpoint paths
+    const isAuthEndpoint = url?.includes('/users/login') || 
+                          url?.includes('/users/signup') || 
+                          url?.includes('/users/profile')
     const isExpectedAuthError = isAuthEndpoint && (status === 401 || status === 400)
     
     if (!isExpectedAuthError) {
@@ -240,6 +247,8 @@ api.isAvailable = async (timeout = 3000) => {
 api.clearAuth = () => {
   localStorage.removeItem('token')
   localStorage.removeItem('user')
+  sessionStorage.removeItem('token')
+  sessionStorage.removeItem('user')
 }
 
 /**
@@ -251,6 +260,19 @@ api.setToken = (token) => {
     localStorage.setItem('token', token)
   } else {
     localStorage.removeItem('token')
+  }
+}
+
+/**
+ * Save auth data after login/signup
+ * @param {Object} data - Response from login/signup: { token, user }
+ */
+export const saveAuth = (data) => {
+  if (data?.token) {
+    localStorage.setItem('token', data.token)
+  }
+  if (data?.user) {
+    localStorage.setItem('user', JSON.stringify(data.user))
   }
 }
 
@@ -288,6 +310,103 @@ export const isAuthenticated = () => {
   } catch {
     return false
   }
+}
+
+// ============================================================================
+// 📦 API HELPERS - Organized by Feature
+// ============================================================================
+
+// ─── Auth Helpers (matches your user.routes.js) ─────────────────────────────
+export const authAPI = {
+  /** Login user: POST /users/login */
+  login: (data) => api.post('/users/login', data),
+  
+  /** Register user: POST /users/signup */
+  signup: (data) => api.post('/users/signup', data),
+  
+  /** Logout: POST /users/logout */
+  logout: () => api.post('/users/logout'),
+  
+  /** Get current user profile: GET /users/profile */
+  getMe: () => api.get('/users/profile'),
+  
+  /** Update profile: PATCH /users/profile */
+  updateProfile: (data) => api.patch('/users/profile', data),
+  
+  /** Change password: PATCH /users/change-password */
+  changePassword: (data) => api.patch('/users/change-password', data),
+  
+  /** Update provider onboarding: PATCH /users/onboarding */
+  updateOnboarding: (data) => api.patch('/users/onboarding', data),
+}
+
+// ─── Job Helpers (adjust paths to match your job.routes.js) ─────────────────
+export const jobAPI = {
+  /** Get jobs posted by current user (client): GET /jobs/my */
+  getMyJobs: () => api.get('/jobs/my'),
+  
+  /** Get jobs assigned to current user (provider): GET /jobs/assigned */
+  getAssignedJobs: () => api.get('/jobs/assigned'),
+  
+  /** Get all public jobs: GET /jobs */
+  getAll: (params) => api.get('/jobs', { params }),
+  
+  /** Get single job: GET /jobs/:id */
+  getById: (id) => api.get(`/jobs/${id}`),
+  
+  /** Create job: POST /jobs */
+  create: (data) => api.post('/jobs', data),
+  
+  /** Update job: PATCH /jobs/:id */
+  update: (id, data) => api.patch(`/jobs/${id}`, data),
+  
+  /** Delete job: DELETE /jobs/:id */
+  delete: (id) => api.delete(`/jobs/${id}`),
+  
+  /** Apply to job: POST /jobs/:id/apply */
+  apply: (id, data) => api.post(`/jobs/${id}/apply`, data),
+  
+  /** Fund escrow: POST /payment/escrow/:jobId/fund */
+  fundEscrow: (jobId) => api.post(`/payment/escrow/${jobId}/fund`),
+}
+
+// ─── Provider Helpers (matches your user.routes.js) ─────────────────────────
+export const providerAPI = {
+  /** Get all public providers: GET /users/providers */
+  getAll: (params) => api.get('/users/providers', { params }),
+  
+  /** Get provider by ID: GET /users/providers/:id */
+  getById: (id) => api.get(`/users/providers/${id}`),
+  
+  /** Get provider reviews: GET /users/providers/:id/reviews */
+  getReviews: (id) => api.get(`/users/providers/${id}/reviews`),
+  
+  /** Submit review for provider: POST /users/providers/:id/reviews */
+  submitReview: (id, data) => api.post(`/users/providers/${id}/reviews`, data),
+}
+
+// ─── Payment/Wallet Helpers (matches your payment.routes.js) ────────────────
+export const paymentAPI = {
+  /** Get wallet info + transactions: GET /payment/wallet */
+  getWallet: () => api.get('/payment/wallet'),
+  
+  /** Get exchange rate: GET /payment/exchange-rate */
+  getExchangeRate: () => api.get('/payment/exchange-rate'),
+  
+  /** Initiate Stripe top-up: POST /payment/topup/initiate */
+  initiateTopup: (data) => api.post('/payment/topup/initiate', data),
+  
+  /** Check top-up status: GET /payment/topup/status */
+  checkTopupStatus: (sessionId) => api.get(`/payment/topup/status?session_id=${sessionId}`),
+  
+  /** Request withdrawal: POST /payment/withdraw */
+  requestWithdrawal: (data) => api.post('/payment/withdraw', data),
+  
+  /** Initiate PayPal escrow: POST /payment/escrow/:jobId/initiate-paypal */
+  initiatePaypalEscrow: (jobId, data) => api.post(`/payment/escrow/${jobId}/initiate-paypal`, data),
+  
+  /** Complete PayPal redirect: POST /payment/paypal/complete */
+  completePaypalRedirect: (data) => api.post('/payment/paypal/complete', data),
 }
 
 // ============================================================================

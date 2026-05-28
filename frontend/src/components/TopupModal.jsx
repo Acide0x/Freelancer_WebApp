@@ -2,29 +2,36 @@
  * TopupModal.jsx
  *
  * Wallet top-up flow that NEVER navigates away from the current page.
+ * Includes token preservation for redirect scenarios & cookie-based auth support.
  *
  * Flow:
  *   1. User opens modal, types NPR amount → POST /payment/topup/initiate
  *   2. Backend returns { clientSecret, sessionId, summary }
  *   3. <EmbeddedCheckout> renders Stripe's card form inside the modal
- *   4. After Stripe calls return_url (with ?session_id=...) we intercept it
- *      using the onComplete callback — no redirect happens
- *   5. Poll GET /payment/topup/status?session_id=... every 2 s until credited
- *   6. Show success (green) or error (red) inline, then close
+ *   4. onComplete callback fires when Stripe form finishes — no redirect
+ *   5. Poll GET /payment/topup/status?session_id=... until credited
+ *   6. Show success/error inline, then close
  *
- * Usage:
- *   <TopupModal isOpen={open} onClose={() => setOpen(false)} onSuccess={refetchWallet} />
- *
- * Dependencies (add to package.json if not already there):
+ * Dependencies:
  *   @stripe/react-stripe-js  @stripe/stripe-js
  *
- * Env var needed in your Vite/CRA setup:
+ * Env vars:
  *   VITE_STRIPE_PUBLISHABLE_KEY=pk_test_...
+ *   VITE_API_BASE=http://localhost:5000
  */
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { loadStripe } from "@stripe/stripe-js";
 import { EmbeddedCheckout, EmbeddedCheckoutProvider } from "@stripe/react-stripe-js";
+
+// ─── Auth Utilities (import from your utils/auth.js) ─────────────────────────
+// If you haven't created utils/auth.js yet, see the auth utilities section below
+import { 
+  getAuthToken, 
+  authHeaders, 
+  backupSession,
+  restoreSession 
+} from "../utils/auth";
 
 // ─── Stripe singleton ─────────────────────────────────────────────────────────
 const stripePromise = loadStripe(
@@ -36,13 +43,6 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:5000";
 const POLL_INTERVAL_MS = 2000;
 const POLL_TIMEOUT_MS  = 5 * 60 * 1000; // 5 min
 
-function authHeaders() {
-  return {
-    Authorization: `Bearer ${localStorage.getItem("token")}`,
-    "Content-Type": "application/json",
-  };
-}
-
 // ─── Phases ───────────────────────────────────────────────────────────────────
 // "amount"   → user types NPR
 // "checkout" → Stripe EmbeddedCheckout rendered
@@ -53,18 +53,27 @@ function authHeaders() {
 export default function TopupModal({ isOpen, onClose, onSuccess }) {
   const [phase, setPhase]           = useState("amount");
   const [amountNpr, setAmountNpr]   = useState("");
-  const [summary, setSummary]       = useState(null);   // { amountNpr, chargedUsd, rateUsed }
+  const [summary, setSummary]       = useState(null);
   const [clientSecret, setClientSecret] = useState(null);
   const [sessionId, setSessionId]   = useState(null);
   const [errorMsg, setErrorMsg]     = useState("");
   const [loading, setLoading]       = useState(false);
   const pollRef = useRef(null);
 
-  // Reset when modal opens / closes
+  // ─── Restore session on mount (handles redirect returns) ───────────────────
+  useEffect(() => {
+    if (isOpen) {
+      const restored = restoreSession();
+      if (restored) {
+        console.log("✓ Session restored from sessionStorage");
+      }
+    }
+  }, [isOpen]);
+
+  // ─── Reset state when modal closes ─────────────────────────────────────────
   useEffect(() => {
     if (!isOpen) {
       stopPolling();
-      // Small delay before resetting so the close animation plays
       const t = setTimeout(() => {
         setPhase("amount");
         setAmountNpr("");
@@ -78,6 +87,11 @@ export default function TopupModal({ isOpen, onClose, onSuccess }) {
     }
   }, [isOpen]);
 
+  // ─── Cleanup polling on unmount ────────────────────────────────────────────
+  useEffect(() => {
+    return () => stopPolling();
+  }, []);
+
   // ── Step 1: Initiate top-up ──────────────────────────────────────────────────
   const handleInitiate = async () => {
     const num = parseFloat(amountNpr);
@@ -87,14 +101,22 @@ export default function TopupModal({ isOpen, onClose, onSuccess }) {
     }
     setErrorMsg("");
     setLoading(true);
+    
     try {
+      // Backup session BEFORE any API call (safety for edge-case redirects)
+      backupSession();
+      
       const res = await fetch(`${API_BASE}/payment/topup/initiate`, {
         method: "POST",
         headers: authHeaders(),
+        credentials: "include", // Critical for HttpOnly cookie auth
         body: JSON.stringify({ amountNpr: num }),
       });
+      
       const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.message ?? "Failed to initiate");
+      if (!res.ok || !data.success) {
+        throw new Error(data.message ?? "Failed to initiate top-up");
+      }
 
       setClientSecret(data.clientSecret);
       setSessionId(data.sessionId);
@@ -105,17 +127,19 @@ export default function TopupModal({ isOpen, onClose, onSuccess }) {
         label:      data.summary,
       });
       setPhase("checkout");
+      
     } catch (err) {
-      setErrorMsg(err.message);
+      console.error("Topup initiate error:", err);
+      setErrorMsg(err.message || "Network error. Please try again.");
     } finally {
       setLoading(false);
     }
   };
 
   // ── Step 2: Stripe EmbeddedCheckout completed callback ───────────────────────
-  // Called when Stripe's embedded form finishes (success OR close-without-paying).
-  // We then poll to find out which.
   const handleCheckoutComplete = useCallback(() => {
+    // Backup session again after Stripe interaction (belt & suspenders)
+    backupSession();
     setPhase("polling");
     startPolling(sessionId);
   }, [sessionId]);
@@ -128,7 +152,10 @@ export default function TopupModal({ isOpen, onClose, onSuccess }) {
       try {
         const res = await fetch(
           `${API_BASE}/payment/topup/status?session_id=${sid}`,
-          { headers: authHeaders() }
+          { 
+            headers: authHeaders(),
+            credentials: "include"
+          }
         );
         const data = await res.json();
 
@@ -142,7 +169,7 @@ export default function TopupModal({ isOpen, onClose, onSuccess }) {
 
         if (data.status === "failed") {
           stopPolling();
-          setErrorMsg("Payment failed or was cancelled.");
+          setErrorMsg("Payment failed or was cancelled. Please try again.");
           setPhase("error");
           return;
         }
@@ -152,12 +179,13 @@ export default function TopupModal({ isOpen, onClose, onSuccess }) {
           setErrorMsg(
             "We couldn't confirm your payment in time. " +
             "If your card was charged, funds will appear shortly. " +
-            "Please check your transaction history."
+            "Please check your wallet balance or contact support."
           );
           setPhase("error");
         }
-      } catch {
-        // Network hiccup — keep polling
+      } catch (err) {
+        console.warn("Polling error (retrying):", err);
+        // Keep polling on network hiccup
       }
     }, POLL_INTERVAL_MS);
   };
@@ -169,52 +197,80 @@ export default function TopupModal({ isOpen, onClose, onSuccess }) {
     }
   };
 
-  // Cleanup on unmount
-  useEffect(() => () => stopPolling(), []);
+  // ─── Handle modal background click ─────────────────────────────────────────
+  const handleOverlayClick = (e) => {
+    // Only close if clicking the overlay, not the modal content
+    if (e.target === e.currentTarget && phase !== "checkout" && phase !== "polling") {
+      onClose();
+    }
+  };
 
   if (!isOpen) return null;
 
   return (
-    <div style={styles.overlay} onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div style={styles.overlay} onClick={handleOverlayClick}>
       <div style={styles.modal}>
 
         {/* ── Header ── */}
         <div style={styles.header}>
           <div>
-            <div style={styles.headerTitle}>Add Money</div>
+            <div style={styles.headerTitle}>Add Money to Wallet</div>
             {summary && phase !== "amount" && (
               <div style={styles.headerSub}>{summary.label}</div>
             )}
           </div>
-          <button style={styles.closeBtn} onClick={onClose} aria-label="Close">✕</button>
+          <button 
+            style={styles.closeBtn} 
+            onClick={onClose} 
+            aria-label="Close modal"
+            disabled={phase === "checkout" || phase === "polling"}
+          >
+            ✕
+          </button>
         </div>
 
         {/* ── Phase: Amount entry ── */}
         {phase === "amount" && (
           <div style={styles.body}>
-            <label style={styles.label}>Amount (NPR)</label>
+            <label style={styles.label}>Enter amount (NPR)</label>
             <div style={styles.inputRow}>
               <span style={styles.currency}>Rs</span>
               <input
                 style={styles.input}
                 type="number"
                 min="100"
+                step="100"
                 placeholder="e.g. 1000"
                 value={amountNpr}
-                onChange={e => { setAmountNpr(e.target.value); setErrorMsg(""); }}
-                onKeyDown={e => e.key === "Enter" && handleInitiate()}
+                onChange={e => { 
+                  setAmountNpr(e.target.value); 
+                  setErrorMsg(""); 
+                }}
+                onKeyDown={e => e.key === "Enter" && !loading && handleInitiate()}
                 autoFocus
+                disabled={loading}
               />
             </div>
-            {errorMsg && <div style={styles.errorText}>{errorMsg}</div>}
+            
+            {errorMsg && <div style={styles.errorText} role="alert">{errorMsg}</div>}
+            
             <ExchangeHint amountNpr={parseFloat(amountNpr)} />
+            
             <button
-              style={{ ...styles.primaryBtn, opacity: loading ? 0.7 : 1 }}
+              style={{ 
+                ...styles.primaryBtn, 
+                opacity: loading || !amountNpr ? 0.7 : 1,
+                cursor: loading || !amountNpr ? "not-allowed" : "pointer"
+              }}
               onClick={handleInitiate}
-              disabled={loading}
+              disabled={loading || !amountNpr}
             >
-              {loading ? "Preparing…" : "Continue to Payment →"}
+              {loading ? "Preparing payment…" : "Continue to Payment →"}
             </button>
+            
+            <div style={styles.securityNote}>
+              🔒 Secured by Stripe • Your card details never touch our servers
+            </div>
           </div>
         )}
 
@@ -223,10 +279,16 @@ export default function TopupModal({ isOpen, onClose, onSuccess }) {
           <div style={styles.checkoutWrap}>
             <EmbeddedCheckoutProvider
               stripe={stripePromise}
-              options={{ clientSecret, onComplete: handleCheckoutComplete }}
+              options={{ 
+                clientSecret, 
+                onComplete: handleCheckoutComplete 
+              }}
             >
               <EmbeddedCheckout />
             </EmbeddedCheckoutProvider>
+            <div style={styles.checkoutHint}>
+              Enter your card details securely above. Do not close this window.
+            </div>
           </div>
         )}
 
@@ -235,7 +297,9 @@ export default function TopupModal({ isOpen, onClose, onSuccess }) {
           <div style={styles.centreBody}>
             <Spinner />
             <div style={styles.pollingTitle}>Confirming your payment…</div>
-            <div style={styles.pollingHint}>This usually takes a few seconds.</div>
+            <div style={styles.pollingHint}>
+              This usually takes just a few seconds. Please wait.
+            </div>
           </div>
         )}
 
@@ -268,7 +332,11 @@ export default function TopupModal({ isOpen, onClose, onSuccess }) {
               <button style={styles.ghostBtn} onClick={onClose}>Close</button>
               <button
                 style={styles.primaryBtn}
-                onClick={() => { setPhase("amount"); setErrorMsg(""); }}
+                onClick={() => { 
+                  setPhase("amount"); 
+                  setErrorMsg(""); 
+                  setAmountNpr("");
+                }}
               >
                 Try Again
               </button>
@@ -286,20 +354,38 @@ export default function TopupModal({ isOpen, onClose, onSuccess }) {
 /** Live exchange hint shown while user types the NPR amount */
 function ExchangeHint({ amountNpr }) {
   const [rate, setRate] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`${API_BASE}/payment/exchange-rate`, { headers: authHeaders() })
-      .then(r => r.json())
-      .then(d => d.success && setRate(d.usdToNpr))
-      .catch(() => {});
+    let mounted = true;
+    
+    const fetchRate = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/payment/exchange-rate`, { 
+          headers: authHeaders(),
+          credentials: "include"
+        });
+        const d = await res.json();
+        if (mounted && d.success) {
+          setRate(d.usdToNpr);
+        }
+      } catch (err) {
+        console.warn("Failed to fetch exchange rate:", err);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+    
+    fetchRate();
+    return () => { mounted = false; };
   }, []);
 
-  if (!rate || isNaN(amountNpr) || amountNpr < 1) return null;
+  if (loading || !rate || isNaN(amountNpr) || amountNpr < 1) return null;
   const usd = (amountNpr / rate).toFixed(2);
 
   return (
     <div style={styles.hint}>
-      ≈ ${usd} USD · 1 USD = Rs {rate}
+      ≈ ${usd} USD · 1 USD = Rs {rate.toLocaleString()}
     </div>
   );
 }
@@ -379,6 +465,9 @@ const styles = {
   hint: {
     fontSize: "12px", color: "#888", marginTop: "-4px",
   },
+  securityNote: {
+    fontSize: "11px", color: "#94A3B8", textAlign: "center", marginTop: "8px",
+  },
   errorText: {
     fontSize: "13px", color: "#DC2626",
     background: "#FEF2F2", padding: "8px 12px", borderRadius: "8px",
@@ -400,6 +489,9 @@ const styles = {
   },
   checkoutWrap: {
     padding: "16px",
+  },
+  checkoutHint: {
+    fontSize: "12px", color: "#64748B", textAlign: "center", marginTop: "12px",
   },
   centreBody: {
     padding: "40px 28px",
@@ -433,7 +525,7 @@ const styles = {
     fontSize: "20px", fontWeight: 700, color: "#111",
   },
   successAmount: {
-    fontSize: "16px", color: "#16A34A", fontWeight: 600,
+    fontSize: "16px", color: "#166534", fontWeight: 600,
   },
   successMeta: {
     fontSize: "12px", color: "#888", marginBottom: "8px",

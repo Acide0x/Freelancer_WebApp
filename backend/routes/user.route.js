@@ -22,6 +22,13 @@ router.get("/providers", userController.getPublicProviders);
 router.get("/providers/:id", userController.getProviderById);
 router.get("/providers/:id/reviews", userController.getProviderReviews);
 
+// backend/routes/user.routes.js — ADD THIS LINE at the very top, before other routes:
+
+// ─── Alias: /auth/me → /users/profile (for frontend compatibility) ─────────
+router.get('/me', verifyAuth, userController.getProfile); // ← ADD THIS ONE LINE
+
+// ... rest of your existing routes stay the same ...
+
 // Protected: Submit review (customers only)
 router.post("/providers/:id/reviews", verifyAuth, userController.submitProviderReview);
 
