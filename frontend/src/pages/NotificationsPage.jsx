@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
-import { 
-  Bell, CheckCircle, AlertCircle, Info, XCircle, Trash2, Check, 
-  Loader2, RefreshCw, Server 
+import {
+  Bell, CheckCircle, AlertCircle, Info, XCircle, Trash2, Check,
+  Loader2, RefreshCw, Server
 } from 'lucide-react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import api from '../api/api'
@@ -39,7 +39,7 @@ export default function NotificationsPage() {
   const { token, loading: authLoading, logout } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
-  
+
   const [notifications, setNotifications] = useState([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -59,8 +59,8 @@ export default function NotificationsPage() {
     } catch (err) {
       if (err.response?.status === 401) {
         logout()
-        navigate('/login', { 
-          state: { from: '/notifications', message: 'Session expired. Please log in again.' } 
+        navigate('/login', {
+          state: { from: '/notifications', message: 'Session expired. Please log in again.' }
         })
         return
       }
@@ -95,29 +95,26 @@ export default function NotificationsPage() {
 
   // 🔐 Auth guard + fetch logic
   useEffect(() => {
-    // Wait for auth context to initialize
+    console.log('🔐 Auth state:', { token, authLoading });
+
     if (authLoading) return
-    
-    // If not authenticated, redirect to login WITH return path
+
     if (!token) {
-      navigate('/login', { 
-        state: { 
-          from: location.pathname, // Save current path for redirect after login
-          message: 'Please log in to view notifications' 
-        } 
+      console.log('🚫 No token, redirecting to login');
+      navigate('/login', {
+        state: { from: location.pathname, message: 'Please log in to view notifications' }
       })
       return
     }
-    
-    // Authenticated: fetch data
+
+    console.log('✅ Token present, fetching notifications');
     fetchNotifications()
   }, [token, authLoading, location.pathname, fetchNotifications, navigate])
 
   // Fetch unread count after notifications load
-  useEffect(() => { 
-    if (!loading && token) fetchUnreadCount() 
+  useEffect(() => {
+    if (!loading && token) fetchUnreadCount()
   }, [loading, token, fetchUnreadCount])
-
   // PATCH /notifications/:id/read
   const handleMarkAsRead = async (id) => {
     if (!token) {
@@ -128,7 +125,7 @@ export default function NotificationsPage() {
     setActionLoading(`read-${id}`)
     try {
       await api.patch(`/notifications/${id}/read`)
-      setNotifications(prev => prev.map(n => 
+      setNotifications(prev => prev.map(n =>
         n.id === id ? { ...n, isRead: true } : n
       ))
       setUnreadCount(prev => Math.max(0, prev - 1))
@@ -259,7 +256,7 @@ export default function NotificationsPage() {
           <Server className="w-16 h-16 text-red-500 mx-auto mb-4" />
           <h2 className="text-xl font-bold text-gray-900 mb-2">Connection Error</h2>
           <p className="text-gray-600 mb-6">{error}</p>
-          
+
           <div className="bg-gray-100 rounded-lg p-4 text-left text-sm text-gray-700 mb-6">
             <p className="font-medium mb-2">Troubleshooting:</p>
             <ul className="list-disc list-inside space-y-1">
@@ -268,7 +265,7 @@ export default function NotificationsPage() {
               <li>CORS enabled for your frontend origin</li>
             </ul>
           </div>
-          
+
           <button
             onClick={() => {
               setError(null)
@@ -307,7 +304,7 @@ export default function NotificationsPage() {
               </button>
             )}
           </div>
-          
+
           <div className="flex items-center justify-between">
             {unreadCount > 0 ? (
               <p className="text-sm text-gray-600">
@@ -328,7 +325,7 @@ export default function NotificationsPage() {
               </button>
             )}
           </div>
-          
+
           {error && notifications.length > 0 && (
             <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
               <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
@@ -343,11 +340,10 @@ export default function NotificationsPage() {
             {notifications.map((notification) => (
               <div
                 key={notification.id}
-                className={`rounded-lg border transition-all ${
-                  notification.isRead
-                    ? 'bg-white border-gray-200'
-                    : 'bg-blue-50 border-blue-200 ring-1 ring-blue-100'
-                }`}
+                className={`rounded-lg border transition-all ${notification.isRead
+                  ? 'bg-white border-gray-200'
+                  : 'bg-blue-50 border-blue-200 ring-1 ring-blue-100'
+                  }`}
               >
                 <div className="p-4 flex gap-4">
                   <div className="flex-shrink-0 mt-1">

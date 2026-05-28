@@ -254,14 +254,6 @@ function EditJobModal({ job, onSave, onClose }) {
 }
 
 // ─── Fund Escrow Modal ────────────────────────────────────────────────────────
-// Flow:
-//   1. Load wallet balance + job escrow amount (no user input needed)
-//   2a. Wallet has enough  → one-click "Fund Escrow" directly from wallet
-//   2b. Wallet short       → embedded Stripe top-up for exact shortfall,
-//                            stays on same page, then auto-funds escrow after
-//                            payment confirmed (no redirect, no new tab)
-//
-// Phases: "check" | "stripe" | "polling" | "success" | "error"
 function FundEscrowModal({ job, onClose, onFunded }) {
   const [wallet, setWallet]           = useState(null);
   const [loadingWallet, setLoadWallet]= useState(true);
@@ -277,7 +269,6 @@ function FundEscrowModal({ job, onClose, onFunded }) {
   const shortfall = Math.max(0, escrowRs - balance);
   const hasFunds  = balance >= escrowRs;
 
-  // Load wallet on mount
   useEffect(() => {
     (async () => {
       try {
@@ -293,7 +284,6 @@ function FundEscrowModal({ job, onClose, onFunded }) {
     return () => stopPolling();
   }, []);
 
-  // ── Direct fund from wallet ──────────────────────────────────────────────────
   const handleFundDirect = async () => {
     setFundLoading(true); setErr(null);
     try {
@@ -310,11 +300,9 @@ function FundEscrowModal({ job, onClose, onFunded }) {
     } finally { setFundLoading(false); }
   };
 
-  // ── Initiate Stripe embedded top-up for exact shortfall ─────────────────────
   const handleInitiateTopup = async () => {
     setErr(null); setFundLoading(true);
     try {
-      // Top up exactly the shortfall (round up to nearest 100, min 100)
       const topupAmt = Math.max(100, Math.ceil(shortfall / 100) * 100);
       const res  = await fetch(`${API_BASE}/payment/topup/initiate`, {
         method: "POST", headers: authHeaders(),
@@ -330,13 +318,11 @@ function FundEscrowModal({ job, onClose, onFunded }) {
     } finally { setFundLoading(false); }
   };
 
-  // ── After Stripe embedded form completes ─────────────────────────────────────
   const handleStripeComplete = useCallback(() => {
     setPhase("polling");
     startPolling(sessionId);
   }, [sessionId]);
 
-  // ── Poll until top-up credited, then auto-fund escrow ────────────────────────
   const startPolling = (sid) => {
     const deadline = Date.now() + 5 * 60 * 1000;
     pollRef.current = setInterval(async () => {
@@ -348,7 +334,6 @@ function FundEscrowModal({ job, onClose, onFunded }) {
 
         if (data.success && data.credited) {
           stopPolling();
-          // Wallet is now topped up — fund the escrow automatically
           await autoFundAfterTopup();
           return;
         }
@@ -394,13 +379,12 @@ function FundEscrowModal({ job, onClose, onFunded }) {
         maxHeight:"90vh",overflowY:"auto",
         boxShadow:"0 24px 64px rgba(0,0,0,0.22)"}}>
 
-        {/* Header */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",
           padding:"1.25rem 1.5rem",borderBottom:"1px solid #F1F5F9"}}>
           <h2 style={{margin:0,fontSize:17,fontWeight:700,color:"#0F172A"}}>
             {phase==="stripe"   ? "💳 Complete Payment"    :
              phase==="polling"  ? "⏳ Confirming…"          :
-             phase==="success"  ? " Escrow Funded"        : "🔒 Fund Escrow"}
+             phase==="success"  ? "✅ Escrow Funded"        : "🔒 Fund Escrow"}
           </h2>
           {phase !== "polling" && phase !== "success" && (
             <button onClick={onClose} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#94A3B8"}}>×</button>
@@ -409,13 +393,11 @@ function FundEscrowModal({ job, onClose, onFunded }) {
 
         <div style={{padding:"1.25rem 1.5rem"}}>
 
-          {/* ── Phase: check (default) ── */}
           {phase === "check" && (
             loadingWallet ? (
               <div style={{textAlign:"center",padding:"2rem",color:"#94A3B8"}}>Loading wallet…</div>
             ) : (
               <div>
-                {/* Escrow + balance summary — no input needed, amounts auto-populated */}
                 <div style={{background:"#F8FAFC",borderRadius:12,padding:"1rem",marginBottom:"1rem",
                   borderLeft:"3px solid #3B82F6"}}>
                   <div style={{fontSize:12,color:"#64748B",marginBottom:4}}>
@@ -451,7 +433,7 @@ function FundEscrowModal({ job, onClose, onFunded }) {
                   <>
                     <div style={{background:"#F0FDF4",borderRadius:10,padding:"10px 14px",
                       fontSize:13,color:"#166534",marginBottom:14}}>
-                       Your wallet has sufficient funds.
+                      ✅ Your wallet has sufficient funds.
                     </div>
                     <button onClick={handleFundDirect} disabled={fundLoading}
                       style={{width:"100%",padding:"13px",borderRadius:10,border:"none",
@@ -482,12 +464,10 @@ function FundEscrowModal({ job, onClose, onFunded }) {
             )
           )}
 
-          {/* ── Phase: stripe (embedded checkout) ── */}
           {phase === "stripe" && clientSecret && (
             <StripeEmbedded clientSecret={clientSecret} onComplete={handleStripeComplete} />
           )}
 
-          {/* ── Phase: polling ── */}
           {phase === "polling" && (
             <div style={{textAlign:"center",padding:"2.5rem 1rem"}}>
               <div style={{
@@ -506,7 +486,6 @@ function FundEscrowModal({ job, onClose, onFunded }) {
             </div>
           )}
 
-          {/* ── Phase: success ── */}
           {phase === "success" && (
             <div style={{textAlign:"center",padding:"2rem 1rem"}}>
               <div style={{width:64,height:64,borderRadius:"50%",background:"#DCFCE7",
@@ -534,13 +513,9 @@ function FundEscrowModal({ job, onClose, onFunded }) {
   );
 }
 
-// Thin wrapper so EmbeddedCheckoutProvider + EmbeddedCheckout can be loaded lazily
-// without adding a React.lazy boundary to the whole file.
-// Requires: npm install @stripe/react-stripe-js @stripe/stripe-js
 let _stripePromise = null;
 function getStripe() {
   if (!_stripePromise) {
-    // Dynamically import to avoid crashing if the package isn't installed yet
     _stripePromise = import("@stripe/stripe-js").then(m =>
       m.loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY ?? "")
     );
@@ -549,9 +524,9 @@ function getStripe() {
 }
 
 function StripeEmbedded({ clientSecret, onComplete }) {
-  const [ECP, setECP]  = useState(null); // EmbeddedCheckoutProvider
-  const [EC,  setEC]   = useState(null); // EmbeddedCheckout
-  const [sp,  setSP]   = useState(null); // stripePromise
+  const [ECP, setECP]  = useState(null);
+  const [EC,  setEC]   = useState(null);
+  const [sp,  setSP]   = useState(null);
   const [loadErr, setLoadErr] = useState(null);
 
   useEffect(() => {
@@ -606,7 +581,7 @@ function CompleteJobModal({ job, userRole, onClose, onCompleted }) {
 
   return (
     <ConfirmModal
-      title=" Complete Job"
+      title="✅ Complete Job"
       message={`Are you sure you want to mark "${job.title}" as complete?${job.escrow?.funded ? " The admin will release the escrow payment to the provider." : ""}`}
       confirmLabel="Mark Complete"
       confirmColor="#166534"
@@ -677,7 +652,7 @@ function CancelJobModal({ job, onClose, onCancelled }) {
   );
 }
 
-// ─── Chat Panel (unchanged) ───────────────────────────────────────────────────
+// ─── Chat Panel ───────────────────────────────────────────────────────────────
 function JobChatPanel({ job, onClose }) {
   const [messages, setMessages]           = useState([]);
   const [conversationId, setConversationId] = useState(null);
@@ -858,7 +833,6 @@ function JobChatPanel({ job, onClose }) {
   );
 }
 
-
 // ─── Star Rating Input ────────────────────────────────────────────────────────
 function StarInput({ value, onChange, size = 28 }) {
   const [hovered, setHovered] = useState(0);
@@ -880,8 +854,6 @@ function StarInput({ value, onChange, size = 28 }) {
 }
 
 // ─── Review Modal ─────────────────────────────────────────────────────────────
-// Calls POST /reviews with { jobId, rating, comment }
-// The backend infers direction (client→provider or provider→client) from the JWT.
 function ReviewModal({ job, onClose, onReviewed }) {
   const [rating,  setRating]  = useState(0);
   const [comment, setComment] = useState("");
@@ -914,7 +886,6 @@ function ReviewModal({ job, onClose, onReviewed }) {
       if (!res.ok) throw new Error(data.message || "Failed to submit review");
       setDone(true);
       toast(isClientUser ? "Provider reviewed! ⭐" : "Client reviewed! ⭐", "success");
-      // Short pause so user sees success state, then close + mark button gone
       setTimeout(() => { onReviewed(); onClose(); }, 1400);
     } catch (e) {
       setErr(e.message);
@@ -932,8 +903,6 @@ function ReviewModal({ job, onClose, onReviewed }) {
         background: "#fff", borderRadius: 20, width: "100%", maxWidth: 440,
         boxShadow: "0 24px 64px rgba(0,0,0,0.22)", overflow: "hidden",
       }}>
-
-        {/* Header */}
         <div style={{
           background: "linear-gradient(135deg,#FFF7ED,#FFFBEB)",
           padding: "1.25rem 1.5rem", borderBottom: "1px solid #FDE68A",
@@ -966,7 +935,6 @@ function ReviewModal({ job, onClose, onReviewed }) {
             </div>
           ) : (
             <>
-              {/* Who is being reviewed */}
               <div style={{
                 display: "flex", alignItems: "center", gap: 12,
                 background: "#F8FAFC", borderRadius: 12, padding: "12px 14px", marginBottom: "1.25rem",
@@ -980,7 +948,6 @@ function ReviewModal({ job, onClose, onReviewed }) {
                 </div>
               </div>
 
-              {/* Stars */}
               <div style={{ marginBottom: "1.25rem" }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: "#475569", marginBottom: 8 }}>
                   How would you rate your experience?
@@ -993,7 +960,6 @@ function ReviewModal({ job, onClose, onReviewed }) {
                 )}
               </div>
 
-              {/* Comment */}
               <div style={{ marginBottom: "1.25rem" }}>
                 <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#475569", marginBottom: 6 }}>
                   Comment <span style={{ color: "#94A3B8", fontWeight: 400 }}>(optional)</span>
@@ -1054,13 +1020,11 @@ function JobCard({ job: initialJob, onJobUpdated, userRole }) {
   const [job, setJob]           = useState(initialJob);
   const [expanded, setExpanded] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
-  const [modal, setModal]       = useState(null); // "edit"|"fund_escrow"|"complete"|"cancel"|"review"
-  // reviewedByMe: null = unchecked, false = not yet reviewed, true = already reviewed
+  const [modal, setModal]       = useState(null);
   const [reviewedByMe, setReviewedByMe] = useState(null);
 
   useEffect(() => { setJob(initialJob); }, [initialJob]);
 
-  // Check if current user already reviewed this job (only for completed jobs)
   useEffect(() => {
     if (initialJob.status !== "completed") return;
     (async () => {
@@ -1068,7 +1032,7 @@ function JobCard({ job: initialJob, onJobUpdated, userRole }) {
         const res = await fetch(`${API_BASE}/reviews/check/${initialJob._id}`, { headers: authHeaders() });
         const data = await res.json();
         if (res.ok) setReviewedByMe(data.reviewed);
-      } catch { /* non-critical — button shows by default */ }
+      } catch { /* non-critical */ }
     })();
   }, [initialJob._id, initialJob.status]);
 
@@ -1086,38 +1050,37 @@ function JobCard({ job: initialJob, onJobUpdated, userRole }) {
   const preferredDate = job.preferredDate ? formatDate(job.preferredDate) : "—";
   const createdAt     = job.createdAt     ? new Date(job.createdAt).toLocaleDateString("en-GB",{day:"numeric",month:"short"}) : "—";
 
-  // Build action buttons from availableActions returned by backend
-  const actions = (job.availableActions || []).filter(a => !(a === "fund_escrow" && job.escrow?.funded));
+  // ── KEY FIX: hide fund_escrow button once escrow is funded OR status is escrow_funded ──
+  const actions = (job.availableActions || []).filter(
+    a => !(a === "fund_escrow" && (job.escrow?.funded || job.status === "escrow_funded"))
+  );
 
-  // Determine whether the Review button should appear.
-  // Shows when: job is completed AND the current user hasn't reviewed yet.
   const showReviewBtn = job.status === "completed" && reviewedByMe === false;
 
   const ACTION_CONFIG = {
-    fund_escrow:  { label:"🔒 Fund Escrow",  bg:"#1D4ED8", color:"#fff",    hover:"#1E40AF" },
-    update:       { label:"✏️ Edit",          bg:"#fff",    color:"#475569", border:"#E2E8F0" },
-    complete_job: { label:"✅ Complete",      bg:"#166534", color:"#fff",    hover:"#14532D" },
-    cancel:       { label:"🚫 Cancel",        bg:"#fff",    color:"#DC2626", border:"#FECACA" },
-    // legacy action name from older backend — keep in sync
-    submit_review:{ label:"⭐ Review",        bg:"#F59E0B", color:"#fff",    hover:"#D97706" },
+    fund_escrow:  { label:"🔒 Fund Escrow",  bg:"#1D4ED8", color:"#fff",    border: undefined },
+    update:       { label:"✏️ Edit",          bg:"#fff",    color:"#475569", border:"#E2E8F0"  },
+    complete_job: { label:"✅ Complete",      bg:"#166534", color:"#fff",    border: undefined },
+    cancel:       { label:"🚫 Cancel",        bg:"#fff",    color:"#DC2626", border:"#FECACA"  },
+    submit_review:{ label:"⭐ Review",        bg:"#F59E0B", color:"#fff",    border: undefined },
   };
 
   const handleActionClick = (action) => {
-    if (action === "fund_escrow")  return setModal("fund_escrow");
-    if (action === "update")       return setModal("edit");
-    if (action === "complete_job") return setModal("complete");
-    if (action === "cancel")       return setModal("cancel");
+    if (action === "fund_escrow")   return setModal("fund_escrow");
+    if (action === "update")        return setModal("edit");
+    if (action === "complete_job")  return setModal("complete");
+    if (action === "cancel")        return setModal("cancel");
     if (action === "submit_review") return setModal("review");
   };
 
   return (
     <>
-      {/* Modals */}
       {modal === "edit" && (
         <EditJobModal job={job} onClose={()=>setModal(null)} onSave={handleJobChange} />
       )}
       {modal === "fund_escrow" && (
-        <FundEscrowModal job={job} onClose={()=>setModal(null)} onFunded={()=>{
+        <FundEscrowModal job={job} onClose={()=>setModal(null)} onFunded={() => {
+          // Immediately update local state so button disappears without waiting for re-fetch
           handleJobChange({
             status: "escrow_funded",
             escrow: { ...job.escrow, funded: true },
@@ -1143,7 +1106,7 @@ function JobCard({ job: initialJob, onJobUpdated, userRole }) {
         transition:"box-shadow 0.2s",
         boxShadow:chatOpen?"0 4px 16px rgba(59,130,246,0.12)":"0 1px 3px rgba(0,0,0,0.06)"}}>
 
-        {/* ── Header ────────────────────────────────────────────────────────── */}
+        {/* Header */}
         <div style={{padding:"1.25rem 1.5rem",borderBottom:"1px solid #F1F5F9"}}>
           <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}>
             <div style={{flex:1,minWidth:0}}>
@@ -1170,7 +1133,7 @@ function JobCard({ job: initialJob, onJobUpdated, userRole }) {
           </div>
         </div>
 
-        {/* ── Meta grid ─────────────────────────────────────────────────────── */}
+        {/* Meta grid */}
         <div style={{padding:"1rem 1.5rem",display:"grid",
           gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:"0.75rem"}}>
           {[
@@ -1194,7 +1157,7 @@ function JobCard({ job: initialJob, onJobUpdated, userRole }) {
           ))}
         </div>
 
-        {/* ── Worker + action buttons ────────────────────────────────────────── */}
+        {/* Worker + action buttons */}
         <div style={{padding:"1rem 1.5rem",borderTop:"1px solid #F1F5F9",
           display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12}}>
           {job.assignedWorker ? (
@@ -1210,7 +1173,6 @@ function JobCard({ job: initialJob, onJobUpdated, userRole }) {
           )}
 
           <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-            {/* Applicants toggle */}
             {job.applications?.length > 0 && (
               <button onClick={()=>setExpanded(p=>!p)}
                 style={{fontSize:12,color:"#3B82F6",background:"transparent",border:"none",
@@ -1219,7 +1181,6 @@ function JobCard({ job: initialJob, onJobUpdated, userRole }) {
               </button>
             )}
 
-            {/* Chat toggle */}
             <button onClick={()=>setChatOpen(p=>!p)}
               title={chatAllowed?"Open job chat":"Chat not available for this status"}
               style={{fontSize:12,fontWeight:600,padding:"5px 14px",
@@ -1231,7 +1192,6 @@ function JobCard({ job: initialJob, onJobUpdated, userRole }) {
               <span>💬</span>{chatOpen?"Close Chat":"Chat"}
             </button>
 
-            {/* Dynamic action buttons */}
             {actions.map(action => {
               const cfg = ACTION_CONFIG[action];
               if (!cfg) return null;
@@ -1246,17 +1206,15 @@ function JobCard({ job: initialJob, onJobUpdated, userRole }) {
               );
             })}
 
-            {/* Review button — shown when job completed and user hasn't reviewed yet */}
-            {showReviewBtn && (
+            {/* {showReviewBtn && (
               <button onClick={() => setModal("review")}
                 style={{fontSize:12,fontWeight:600,padding:"5px 14px",borderRadius:8,
                   background:"#F59E0B",color:"#fff",cursor:"pointer",border:"none",
                   transition:"background 0.15s"}}>
                 ⭐ {getUserRole() === "customer" ? "Review Provider" : "Review Client"}
               </button>
-            )}
+            )} */}
 
-            {/* Badge when already reviewed */}
             {reviewedByMe === true && job.status === "completed" && (
               <span style={{fontSize:12,fontWeight:500,padding:"5px 10px",borderRadius:8,
                 background:"#F0FDF4",color:"#166534",border:"1px solid #BBF7D0"}}>
@@ -1266,7 +1224,7 @@ function JobCard({ job: initialJob, onJobUpdated, userRole }) {
           </div>
         </div>
 
-        {/* ── Applicants panel ─────────────────────────────────────────────── */}
+        {/* Applicants panel */}
         {expanded && job.applications?.length > 0 && (
           <div style={{borderTop:"1px solid #F1F5F9",padding:"1rem 1.5rem",background:"#FAFAFA"}}>
             <div style={{fontSize:12,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em",
@@ -1292,7 +1250,7 @@ function JobCard({ job: initialJob, onJobUpdated, userRole }) {
           </div>
         )}
 
-        {/* ── Inline Chat ───────────────────────────────────────────────────── */}
+        {/* Inline Chat */}
         {chatOpen && <JobChatPanel job={job} onClose={()=>setChatOpen(false)}/>}
       </div>
     </>
@@ -1310,8 +1268,8 @@ export default function ActiveJobsPage() {
   const fetchJobs = useCallback(async () => {
     try {
       const endpoint = userRole === "provider"
-        ? `${API_BASE}/jobs/assigned`      // provider's accepted jobs
-        : `${API_BASE}/jobs/my`;           // client's posted jobs
+        ? `${API_BASE}/jobs/assigned`
+        : `${API_BASE}/jobs/my`;
       const res = await fetch(endpoint, { headers: authHeaders() });
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);
       const data = await res.json();
@@ -1360,13 +1318,11 @@ export default function ActiveJobsPage() {
     <div style={{maxWidth:860,margin:"0 auto",padding:"2rem 1rem",fontFamily:"'DM Sans',system-ui,sans-serif"}}>
       <ToastContainer/>
 
-      {/* Page header */}
       <div style={{marginBottom:"1.75rem"}}>
         <h1 style={{margin:0,fontSize:26,fontWeight:800,color:"#0F172A",letterSpacing:"-0.02em"}}>{pageTitle}</h1>
         <p style={{margin:"4px 0 0",fontSize:14,color:"#64748B"}}>{pageSubtitle}</p>
       </div>
 
-      {/* Stats */}
       <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:"1.75rem"}}>
         <StatCard label="Total Jobs"    value={jobs.length}                           accent="#3B82F6"/>
         <StatCard label="In Progress"   value={inProgress}                            accent="#F59E0B"/>
@@ -1377,7 +1333,6 @@ export default function ActiveJobsPage() {
         </>}
       </div>
 
-      {/* Job cards */}
       {jobs.length === 0 ? (
         <div style={{textAlign:"center",padding:"4rem",color:"#94A3B8",background:"#F8FAFC",borderRadius:16}}>
           <div style={{fontSize:40,marginBottom:12}}>📋</div>
